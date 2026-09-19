@@ -4,35 +4,400 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mapa de La Habana, Cuba</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="lib/leaflet/leaflet.css" />
   <style>
+    html, body { margin: 0; padding: 0; height: 100%; }
     #map { width: 100%; height: 100vh; background: #ccc; }
     .btn-zoom { position: absolute; top: 10px; left: 10px; z-index: 1000; }
     .btn-zoom button { margin: 5px; padding: 5px 10px; }
-    .attribution { position: absolute; bottom: 10px; left: 10px; font-size: 12px; width: auto; }
+    .download-panel {
+      position: absolute;
+      top: 60px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      font-size: 12px;
+      max-width: 220px;
+    }
+    .download-panel label { display: block; margin-bottom: 4px; }
+    .download-panel select { width: 100%; font-size: 12px; }
+    .download-panel small { display: block; margin-top: 4px; color: #ccc; }
+    .download-panel .dp-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .download-panel .dp-title { font-weight: bold; }
+    .download-panel .dp-toggle {
+      background: rgba(255, 255, 255, 0.25);
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      width: 20px;
+      height: 20px;
+      font-size: 14px;
+      line-height: 1;
+      cursor: pointer;
+      flex: none;
+    }
+    .download-panel.collapsed { padding: 4px 8px; }
+    .download-panel.collapsed .dp-body { display: none; }
+    .offline-status {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      max-width: 260px;
+    }
+    .offline-status .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #bbb;
+      flex: none;
+    }
+    .offline-status.ready .dot { background: #4caf50; }
+    .offline-status.downloading .dot {
+      background: #ff9800;
+      animation: offline-pulse 1s infinite;
+    }
+    .offline-status.empty .dot { background: #f44336; }
+    @keyframes offline-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .offline-status .progress {
+      flex: 1 0 100%;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.25);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .offline-status .progress-bar {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: #ff9800;
+      border-radius: 4px;
+      transition: width 0.2s ease;
+    }
   </style>
 </head>
 <body>
-<div class="attribution">&copy; <a href="https://www.stamen.com/">Stamen Design</a>, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a></div>
   <div id="map"></div>
   <div class="btn-zoom">
     <button id="zoomIn">+</button>
     <button id="zoomOut">-</button>
   </div>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <div class="download-panel" id="downloadPanel">
+    <div class="dp-header" id="dpHeader" title="Minimizar / expandir">
+      <span class="dp-title">Descargar mapa</span>
+      <button id="dpToggle" type="button" class="dp-toggle">−</button>
+    </div>
+    <div class="dp-body">
+      <label for="zoomLevel">Hasta el zoom</label>
+      <select id="zoomLevel">
+        <option value="13">13 - calles y barrios</option>
+        <option value="14">14 - calles principales</option>
+        <option value="15">15 - calles detalladas</option>
+        <option value="16">16 - detalle completo</option>
+        <option value="17">17 - detalle fino (pesado)</option>
+      </select>
+      <small id="zoomInfo"></small>
+    </div>
+  </div>
+  <div id="offline-status" class="offline-status" hidden></div>
+
+  <script src="lib/leaflet/leaflet.js"></script>
+  <script src="offline.js"></script>
   <script>
     'use strict';
-    const map = L.map('map', { center: [23.1364, -82.3686], zoom: 15, zoomControl: false });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+
+    var HAVANA_BOUNDS = L.latLngBounds([22.9337108, -82.6072626], [23.3857728, -82.0814213]);
+    var MIN_ZOOM = 12;
+    var MAX_DOWNLOAD_ZOOM = 17;
+
+    function readStoredZoom() {
+      try {
+        var v = parseInt(localStorage.getItem('havanamap-maxzoom'), 10);
+        return (v >= MIN_ZOOM && v <= MAX_DOWNLOAD_ZOOM) ? v : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    var downloadTargetZoom = readStoredZoom() || 16;
+    var downloadSession = { active: false };
+
+    function downloadZooms() {
+      var zs = [];
+      for (var z = MIN_ZOOM; z <= downloadTargetZoom; z += 1) zs.push(z);
+      return zs;
+    }
+
+    var map = L.map('map', {
+      center: HAVANA_BOUNDS.getCenter(),
+      zoom: MIN_ZOOM,
+      minZoom: MIN_ZOOM,
+      maxZoom: downloadTargetZoom,
+      maxBounds: HAVANA_BOUNDS,
+      maxBoundsViscosity: 1,
+      zoomControl: false
+    });
+
+    new OfflineTileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
+      maxZoom: MAX_DOWNLOAD_ZOOM
     }).addTo(map);
     map.attributionControl.setPrefix(false);
 
-    document.getElementById('zoomIn').addEventListener('click', () => map.zoomIn());
-    document.getElementById('zoomOut').addEventListener('click', () => map.zoomOut());
+    document.getElementById('zoomIn').addEventListener('click', function () { map.zoomIn(); });
+    document.getElementById('zoomOut').addEventListener('click', function () { map.zoomOut(); });
 
-    // Forzar redibujado después de un pequeño retraso
-    setTimeout(() => { map.invalidateSize(); }, 100);
+    var statusEl = document.getElementById('offline-status');
+
+    function setStatus(text, cls, pct) {
+      statusEl.hidden = false;
+      statusEl.classList.remove('ready', 'downloading', 'empty');
+      if (cls) statusEl.classList.add(cls);
+      var bar = '';
+      if (pct !== undefined && pct !== null) {
+        bar = '<span class="progress"><span class="progress-bar" style="width:' + pct + '%"></span></span>';
+      }
+      statusEl.innerHTML = '<span class="dot"></span><span class="status-text">' + text + '</span>' + bar;
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return '0 B';
+      var units = ['B', 'KB', 'MB', 'GB'];
+      var i = Math.floor(Math.log(bytes) / Math.log(1024));
+      if (i >= units.length) i = units.length - 1;
+      return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+    }
+
+    function refreshStatus() {
+      HavanaTiles.getCacheInfo().then(function (info) {
+        if (info.count > 0) {
+          setStatus('Mapa disponible sin conexión: ' + info.count + ' tiles (' + formatBytes(info.bytes) + ')', 'ready');
+        } else {
+          setStatus('Mapa sin descargar: se descargará al cargar, requiere internet', 'empty');
+        }
+      }).catch(function () {
+        setStatus('Almacenamiento no disponible', 'empty');
+      });
+    }
+
+    function tilesForRect(zoom) {
+      var topLeft = map.project(HAVANA_BOUNDS.getNorthWest(), zoom).divideBy(256).floor();
+      var bottomRight = map.project(HAVANA_BOUNDS.getSouthEast(), zoom).divideBy(256).floor();
+      var tiles = [];
+      for (var x = topLeft.x; x <= bottomRight.x; x += 1) {
+        for (var y = topLeft.y; y <= bottomRight.y; y += 1) {
+          tiles.push({
+            key: zoom + '/' + x + '/' + y,
+            url: 'https://a.tile.openstreetmap.org/' + zoom + '/' + x + '/' + y + '.png'
+          });
+        }
+      }
+      return tiles;
+    }
+
+    function allTiles() {
+      var tiles = [];
+      downloadZooms().forEach(function (z) {
+        tiles = tiles.concat(tilesForRect(z));
+      });
+      return tiles;
+    }
+
+    function totalTilesFor(maxZoomLevel) {
+      var n = 0;
+      for (var z = MIN_ZOOM; z <= maxZoomLevel; z += 1) {
+        n += tilesForRect(z).length;
+      }
+      return n;
+    }
+
+    function downloadWithLimit(db, tiles, session, onProgress) {
+      var MAX_CONCURRENT = 8;
+      var index = 0;
+      var processed = 0;
+      var total = tiles.length;
+
+      function report() {
+        if (session.active && onProgress) onProgress(processed, total);
+      }
+
+      function processOne(t) {
+        if (!session.active) return Promise.resolve();
+        return HavanaTiles.getTile(db, t.key)
+          .then(function () { processed += 1; report(); })
+          .catch(function () {
+            if (!session.active) return Promise.resolve();
+            var controller = window.AbortController ? new AbortController() : null;
+            var timer = controller === null ? null : setTimeout(function () { controller.abort(); }, 20000);
+            var opts = { credentials: 'omit' };
+            if (controller) opts.signal = controller.signal;
+            function clearTimer() { if (timer) clearTimeout(timer); }
+            return fetch(t.url, opts)
+              .then(function (res) {
+                clearTimer();
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.blob();
+              })
+              .then(function (blob) {
+                return new Promise(function (resolveTx, rejectTx) {
+                  var tx = db.transaction(HavanaTiles.STORE, 'readwrite');
+                  tx.objectStore(HavanaTiles.STORE).put(blob, t.key);
+                  tx.oncomplete = function () { resolveTx(); };
+                  tx.onerror = function () { rejectTx(tx.error); };
+                  tx.onabort = function () { rejectTx(tx.error); };
+                });
+              })
+              .catch(function () {})
+              .then(function () { processed += 1; report(); });
+          });
+      }
+
+      function worker() {
+        function run() {
+          if (!session.active || index >= total) return Promise.resolve();
+          var t = tiles[index];
+          index += 1;
+          return processOne(t).then(run);
+        }
+        return run();
+      }
+
+      var workers = [];
+      for (var w = 0; w < Math.min(MAX_CONCURRENT, total); w += 1) {
+        workers.push(worker());
+      }
+      return Promise.all(workers);
+    }
+
+    var downloadRunning = false;
+
+    function ensureOffline() {
+      if (downloadRunning) return;
+      downloadRunning = true;
+      var session = { active: true };
+      downloadSession = session;
+
+      var tiles;
+      try {
+        tiles = allTiles();
+      } catch (e) {
+        console.error('Error al preparar la descarga:', e);
+        refreshStatus();
+        return;
+      }
+      var total = tiles.length;
+
+      HavanaTiles.getCacheInfo().then(function (info) {
+        if (!session.active) return;
+        if (info.count >= total) { markComplete(); return; }
+        var baseMsg = info.count > 0
+          ? 'Completando descarga de La Habana...'
+          : 'Descargando todo el mapa de La Habana...';
+        setStatus(baseMsg + ' (0/' + total + ')', 'downloading', 0);
+        return HavanaTiles.openDB().then(function (db) {
+          return downloadWithLimit(db, tiles, session, function (done, t) {
+            var pct = done === 0 ? 0 : Math.floor(done * 100 / t);
+            setStatus('Descargando el mapa de La Habana... ' + pct + '% (' + done + '/' + t + ')', 'downloading', pct);
+          });
+        });
+      }).then(function () {
+        if (session.active) markComplete();
+      }, function (err) {
+        console.error('Error en la descarga offline:', err);
+        if (session.active) refreshStatus();
+      });
+    }
+
+    var zoomSelect = document.getElementById('zoomLevel');
+    var zoomInfoEl = document.getElementById('zoomInfo');
+
+    var downloadPanel = document.getElementById('downloadPanel');
+    var dpToggle = document.getElementById('dpToggle');
+
+    function collapsePanel() {
+      downloadPanel.classList.add('collapsed');
+      dpToggle.textContent = '+';
+    }
+
+    function expandPanel() {
+      downloadPanel.classList.remove('collapsed');
+      dpToggle.textContent = '−';
+    }
+
+    function isFullyDownloaded() {
+      return HavanaTiles.getCacheInfo().then(function (info) {
+        return info.count >= totalTilesFor(downloadTargetZoom);
+      }).catch(function () { return false; });
+    }
+
+    function markComplete() {
+      refreshStatus();
+      isFullyDownloaded().then(function (full) { if (full) collapsePanel(); });
+    }
+
+    dpToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (downloadPanel.classList.contains('collapsed')) expandPanel();
+      else collapsePanel();
+    });
+    document.getElementById('dpHeader').addEventListener('click', function () {
+      if (downloadPanel.classList.contains('collapsed')) expandPanel();
+      else collapsePanel();
+    });
+
+    function applyZoomChoice() {
+      var v = parseInt(zoomSelect.value, 10);
+      if (!(v >= MIN_ZOOM && v <= MAX_DOWNLOAD_ZOOM)) return;
+      downloadTargetZoom = v;
+      try { localStorage.setItem('havanamap-maxzoom', String(v)); } catch (e) {}
+      map.setMaxZoom(v);
+      zoomInfoEl.textContent = '≈ ' + totalTilesFor(v).toLocaleString() + ' tiles';
+      expandPanel();
+      downloadSession.active = false;
+      downloadRunning = false;
+      ensureOffline();
+    }
+
+    zoomSelect.addEventListener('change', applyZoomChoice);
+    zoomSelect.value = String(downloadTargetZoom);
+    zoomInfoEl.textContent = '≈ ' + totalTilesFor(downloadTargetZoom).toLocaleString() + ' tiles';
+
+    setTimeout(function () {
+      map.invalidateSize();
+      map.fitBounds(HAVANA_BOUNDS, { padding: [10, 10] });
+    }, 100);
+
+    // Iniciar la descarga completa en cuanto se entra a la página,
+    // sin depender del evento 'load' del mapa.
+    setTimeout(ensureOffline, 500);
+
+    // Si el mapa ya está completo, minimizar el panel de descarga.
+    isFullyDownloaded().then(function (full) { if (full) collapsePanel(); });
+
+    refreshStatus();
   </script>
 </body>
 </html>
