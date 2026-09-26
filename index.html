@@ -397,6 +397,16 @@
     // Si el mapa ya está completo, minimizar el panel de descarga.
     isFullyDownloaded().then(function (full) { if (full) collapsePanel(); });
 
+    // Registrar el Service Worker para poder abrir la página sin conexión
+    // (si ya se ha visitado una vez con internet).
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('sw.js').catch(function (err) {
+          console.error('Error al registrar el service worker:', err);
+        });
+      });
+    }
+
     refreshStatus();
   </script>
 </body>
