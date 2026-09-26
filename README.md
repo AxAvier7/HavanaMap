@@ -10,55 +10,31 @@ Mapa interactivo de **La Habana, Cuba** que funciona sin conexión a internet de
 - Usa Leaflet 1.9.4 (incluido localmente, sin dependencias externas)
 - **Descarga completa de La Habana**: guarda en el navegador todos los tiles del rectángulo hasta el nivel elegido, para usarlos sin conexión
 
-## Formas de abrir la web
+## Requisitos
 
-El proyecto no necesita instalación. Elige la que prefieras:
+- [Visual Studio Code](https://code.visualstudio.com/)
+- Extensión [Live Server](https://marketplace.visualstudio.com/items?itemName=ritwickdey.LiveServer)
+- Conexión a internet **solo en la primera carga** (para descargar los tiles del mapa)
 
-### 1. Abrir directo el archivo (la más simple)
+## Cómo ejecutar
 
-Haz **doble clic** en `index.html` o arrástralo a la ventana del navegador. Como la librería Leaflet ya está incluida en el proyecto, el mapa se ve sin ningún servidor.
+1. Clona el repositorio:
 
-> Nota: algunos navegadores pueden restringir el modo `file://`. Si algo no funciona, usa una de las opciones siguientes.
+   ```
+   git clone https://github.com/AxAvier7/HavanaMap.git
+   ```
 
-### 2. VS Code + Live Server
+2. Abre la carpeta en VS Code:
 
-1. Instala la extensión **Live Server** (Marketplace: Ctrl+Shift+X y busca "Live Server").
-2. Haz clic derecho sobre `index.html` y selecciona **"Open with Live Server"**.
+   ```
+   code HavanaMap
+   ```
 
-### 3. Servidor local (sin VS Code)
+3. Instala la extensión **Live Server** si aún no la tienes (Marketplace: Ctrl+Shift+X y busca "Live Server").
 
-Desde la carpeta del proyecto, en una terminal:
+4. Haz clic derecho sobre el archivo `index.html` y selecciona **"Open with Live Server"**.
 
-- Con **Python**:
-  ```
-  python -m http.server
-  ```
-  Luego abre `http://localhost:8000`.
-
-- Con **Node.js / npx**:
-  ```
-  npx serve
-  ```
-  Luego abre la URL que indique (normalmente `http://localhost:3000`).
-
-- Con **PHP**:
-  ```
-  php -S localhost:8000
-  ```
-
-### 4. Desplegar en GitHub Pages (para compartir el enlace)
-
-Publica el proyecto en internet de forma gratuita. Como `index.html` está en la raíz del repo:
-
-1. Ve a GitHub → repositorio **HavanaMap** → **Settings** → **Pages**.
-2. En **Build and deployment** → **Source** elige *Deploy from a branch* → rama `main` → carpeta `/ (root)`.
-3. Guarda. El mapa quedará disponible en `https://AxAvier7.github.io/HavanaMap/`.
-
-También puedes simplemente clonar el repo en cualquier máquina y usar cualquiera de los métodos 1–3.
-
-## Cómo usar la página
-
-1. Al abrir la página (en cualquiera de las formas anteriores), en la esquina superior izquierda hay un selector **"Descargar mapa hasta el zoom"** donde eliges el nivel de detalle:
+5. Se abrirá el navegador con el mapa. En la esquina superior izquierda hay un selector **"Descargar mapa hasta el zoom"** donde eliges el nivel de detalle:
 
    - **13–15**: descarga más rápida (menos tiles).
    - **16** (por defecto): detalle completo de calles y manzanas.
@@ -71,7 +47,7 @@ También puedes simplemente clonar el repo en cualquier máquina y usar cualquie
 
    Cuando la descarga termina, el panel de descarga se **minimiza automáticamente** (solo queda el título "Descargar mapa"); haz clic sobre él o en el botón `+` para reexpandirlo y cambiar el nivel.
 
-2. Cuando el indicador se ponga verde, puedes desconectarte. El zoom máximo del mapa coincide con el nivel descargado.
+6. Cuando el indicador se ponga verde, puedes desconectarte. El zoom máximo del mapa coincide con el nivel descargado.
 
 ## Ajustes
 
