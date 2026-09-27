@@ -79,6 +79,18 @@
     }
     .pins-form button.active { background: #4caf50; color: #fff; border-color: #4caf50; }
     .pins-form .hint { display: block; margin-top: 4px; color: #ccc; }
+    .pins-list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      font-weight: bold;
+    }
+    .pins-count { color: #ccc; font-weight: normal; }
     #pinList {
       list-style: none;
       margin: 8px 0 0;
@@ -86,6 +98,7 @@
       max-height: 180px;
       overflow-y: auto;
     }
+    #pinList.collapsed { display: none; }
     #pinList li {
       display: flex;
       align-items: center;
@@ -198,6 +211,10 @@
           </select>
           <button id="pinAddBtn" type="button">+ Añadir pin en el mapa</button>
           <small class="hint" id="pinHint"></small>
+        </div>
+        <div class="pins-list-header" id="pinsListHeader" title="Recoger / desplegar lista">
+          <span class="pins-list-title">Lista de pines <span class="pins-count" id="pinsCount"></span></span>
+          <button id="pinsListToggle" type="button" class="dp-toggle">−</button>
         </div>
         <ul id="pinList"></ul>
       </div>
@@ -583,6 +600,7 @@
       if (pins.length === 0 && !pinHint.textContent) {
         pinHint.textContent = 'Aún no hay ubicaciones guardadas.';
       }
+      if (pinsCount) pinsCount.textContent = pins.length ? '(' + pins.length + ')' : '';
     }
 
     pinAddBtn.addEventListener('click', function () {
@@ -673,6 +691,31 @@
       e.stopPropagation();
       if (pinsPanel.classList.contains('collapsed')) expandPinsPanel();
       else collapsePinsPanel();
+    });
+
+    var pinsListHeader = document.getElementById('pinsListHeader');
+    var pinsListToggle = document.getElementById('pinsListToggle');
+    var pinsCount = document.getElementById('pinsCount');
+
+    function collapsePinList() {
+      pinListEl.classList.add('collapsed');
+      pinsListToggle.textContent = '+';
+    }
+
+    function expandPinList() {
+      pinListEl.classList.remove('collapsed');
+      pinsListToggle.textContent = '−';
+    }
+
+    pinsListHeader.addEventListener('click', function () {
+      if (pinListEl.classList.contains('collapsed')) expandPinList();
+      else collapsePinList();
+    });
+
+    pinsListToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pinListEl.classList.contains('collapsed')) expandPinList();
+      else collapsePinList();
     });
 
     renderPins();
