@@ -8,13 +8,17 @@
   <style>
     html, body { margin: 0; padding: 0; height: 100%; }
     #map { width: 100%; height: 100vh; background: #ccc; }
-    .btn-zoom { position: absolute; top: 10px; left: 10px; z-index: 1000; }
-    .btn-zoom button { margin: 5px; padding: 5px 10px; }
-    .download-panel {
+    .controls {
       position: absolute;
-      top: 60px;
+      top: 10px;
       left: 10px;
       z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      max-width: 220px;
+    }
+    .download-panel {
       background: rgba(0, 0, 0, 0.72);
       color: #fff;
       padding: 8px 10px;
@@ -48,6 +52,63 @@
     }
     .download-panel.collapsed { padding: 4px 8px; }
     .download-panel.collapsed .dp-body { display: none; }
+    .pins-panel {
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      font-size: 12px;
+      max-width: 220px;
+    }
+    .pins-title { font-weight: bold; display: block; margin-bottom: 6px; }
+    .pins-form input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 4px;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    .pins-form select { width: 100%; font-size: 12px; margin-bottom: 4px; }
+    .pins-form button {
+      width: 100%;
+      padding: 5px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .pins-form button.active { background: #4caf50; color: #fff; border-color: #4caf50; }
+    .pins-form .hint { display: block; margin-top: 4px; color: #ccc; }
+    #pinList {
+      list-style: none;
+      margin: 8px 0 0;
+      padding: 0;
+      max-height: 180px;
+      overflow-y: auto;
+    }
+    #pinList li {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    #pinList .pin-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+    #pinList .pin-name {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #pinList button {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      padding: 2px 6px;
+      font-size: 11px;
+      cursor: pointer;
+      flex: none;
+    }
     .offline-status {
       position: absolute;
       top: 10px;
@@ -101,25 +162,39 @@
 </head>
 <body>
   <div id="map"></div>
-  <div class="btn-zoom">
-    <button id="zoomIn">+</button>
-    <button id="zoomOut">-</button>
-  </div>
-  <div class="download-panel" id="downloadPanel">
-    <div class="dp-header" id="dpHeader" title="Minimizar / expandir">
-      <span class="dp-title">Descargar mapa</span>
-      <button id="dpToggle" type="button" class="dp-toggle">−</button>
+  <div class="controls">
+    <div class="download-panel" id="downloadPanel">
+      <div class="dp-header" id="dpHeader" title="Minimizar / expandir">
+        <span class="dp-title">Descargar mapa</span>
+        <button id="dpToggle" type="button" class="dp-toggle">−</button>
+      </div>
+      <div class="dp-body">
+        <label for="zoomLevel">Hasta el zoom</label>
+        <select id="zoomLevel">
+          <option value="13">13 - calles y barrios</option>
+          <option value="14">14 - calles principales</option>
+          <option value="15">15 - calles detalladas</option>
+          <option value="16">16 - detalle completo</option>
+          <option value="17">17 - detalle fino (pesado)</option>
+        </select>
+        <small id="zoomInfo"></small>
+      </div>
     </div>
-    <div class="dp-body">
-      <label for="zoomLevel">Hasta el zoom</label>
-      <select id="zoomLevel">
-        <option value="13">13 - calles y barrios</option>
-        <option value="14">14 - calles principales</option>
-        <option value="15">15 - calles detalladas</option>
-        <option value="16">16 - detalle completo</option>
-        <option value="17">17 - detalle fino (pesado)</option>
-      </select>
-      <small id="zoomInfo"></small>
+    <div class="pins-panel" id="pinsPanel">
+      <span class="pins-title">Mis ubicaciones</span>
+      <div class="pins-form">
+        <input type="text" id="pinName" placeholder="Nombre del lugar" maxlength="40" />
+        <select id="pinColor">
+          <option value="#e63946">Rojo</option>
+          <option value="#457b9d">Azul</option>
+          <option value="#2a9d8f">Verde</option>
+          <option value="#e9c46a">Amarillo</option>
+          <option value="#9b5de5">Morado</option>
+        </select>
+        <button id="pinAddBtn" type="button">+ Añadir pin en el mapa</button>
+        <small class="hint" id="pinHint"></small>
+      </div>
+      <ul id="pinList"></ul>
     </div>
   </div>
   <div id="offline-status" class="offline-status" hidden></div>
@@ -166,9 +241,6 @@
       maxZoom: MAX_DOWNLOAD_ZOOM
     }).addTo(map);
     map.attributionControl.setPrefix(false);
-
-    document.getElementById('zoomIn').addEventListener('click', function () { map.zoomIn(); });
-    document.getElementById('zoomOut').addEventListener('click', function () { map.zoomOut(); });
 
     var statusEl = document.getElementById('offline-status');
 
@@ -406,6 +478,174 @@
         });
       });
     }
+
+    /* ===== Ubicaciones guardadas (pines) ===== */
+    var PIN_KEY = 'havanamap-pins';
+    var pins = loadPins();
+    var pinMode = false;
+    var editingPinId = null;
+    var pinLayer = L.layerGroup().addTo(map);
+    var pinNameInput = document.getElementById('pinName');
+    var pinColorInput = document.getElementById('pinColor');
+    var pinAddBtn = document.getElementById('pinAddBtn');
+    var pinHint = document.getElementById('pinHint');
+    var pinListEl = document.getElementById('pinList');
+
+    function loadPins() {
+      try {
+        var raw = localStorage.getItem(PIN_KEY);
+        var arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function savePins() {
+      try { localStorage.setItem(PIN_KEY, JSON.stringify(pins)); } catch (e) {}
+    }
+
+    function findPin(id) {
+      for (var i = 0; i < pins.length; i += 1) {
+        if (String(pins[i].id) === String(id)) return pins[i];
+      }
+      return null;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    function resetPinForm() {
+      editingPinId = null;
+      pinMode = false;
+      pinNameInput.value = '';
+      pinColorInput.value = '#e63946';
+      pinAddBtn.classList.remove('active');
+      pinAddBtn.textContent = '+ Añadir pin en el mapa';
+      map.getContainer().style.cursor = '';
+      pinHint.textContent = '';
+    }
+
+    function makePinsDot(color) {
+      var d = document.createElement('span');
+      d.className = 'pin-dot';
+      d.style.background = color;
+      return d;
+    }
+
+    function renderPins() {
+      pinLayer.clearLayers();
+      pinListEl.innerHTML = '';
+      pins.forEach(function (p) {
+        var marker = L.circleMarker([p.lat, p.lng], {
+          radius: 10,
+          color: '#fff',
+          weight: 2,
+          fillColor: p.color,
+          fillOpacity: 1
+        }).addTo(pinLayer);
+        marker.bindPopup(
+          '<strong>' + escapeHtml(p.name) + '</strong><br>' +
+          '<span style="color:#999">' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</span>'
+        );
+
+        var li = document.createElement('li');
+        li.appendChild(makePinsDot(p.color));
+        var name = document.createElement('span');
+        name.className = 'pin-name';
+        name.textContent = p.name;
+        li.appendChild(name);
+
+        var buttons = [
+          { cls: 'pin-go', text: 'Ir' },
+          { cls: 'pin-edit', text: 'Editar' },
+          { cls: 'pin-del', text: '✕' }
+        ];
+        buttons.forEach(function (b) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = b.cls;
+          btn.textContent = b.text;
+          btn.dataset.id = p.id;
+          li.appendChild(btn);
+        });
+        pinListEl.appendChild(li);
+      });
+      if (pins.length === 0 && !pinHint.textContent) {
+        pinHint.textContent = 'Aún no hay ubicaciones guardadas.';
+      }
+    }
+
+    pinAddBtn.addEventListener('click', function () {
+      if (editingPinId !== null) {
+        var pin = findPin(editingPinId);
+        if (pin) {
+          var newName = pinNameInput.value.trim();
+          if (newName) pin.name = newName;
+          pin.color = pinColorInput.value;
+          savePins();
+        }
+        resetPinForm();
+        renderPins();
+        return;
+      }
+      pinMode = !pinMode;
+      pinAddBtn.classList.toggle('active', pinMode);
+      pinAddBtn.textContent = pinMode
+        ? 'Haz clic en el mapa para colocar el pin'
+        : '+ Añadir pin en el mapa';
+      map.getContainer().style.cursor = pinMode ? 'crosshair' : '';
+      pinHint.textContent = pinMode
+        ? 'Haz clic en cualquier punto del mapa.'
+        : (pins.length === 0 ? 'Aún no hay ubicaciones guardadas.' : '');
+    });
+
+    map.on('click', function (e) {
+      if (!pinMode) return;
+      var name = pinNameInput.value.trim() || ('Ubicación ' + (pins.length + 1));
+      pins.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        name: name,
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+        color: pinColorInput.value
+      });
+      savePins();
+      renderPins();
+      pinMode = false;
+      pinAddBtn.classList.remove('active');
+      pinAddBtn.textContent = '+ Añadir pin en el mapa';
+      pinHint.textContent = 'Pin guardado en ' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+    });
+
+    pinListEl.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('button') : null;
+      if (!btn || !btn.dataset.id) return;
+      var pin = findPin(btn.dataset.id);
+      if (!pin) return;
+      if (btn.classList.contains('pin-go')) {
+        map.setView([pin.lat, pin.lng], 17);
+      } else if (btn.classList.contains('pin-edit')) {
+        editingPinId = pin.id;
+        pinNameInput.value = pin.name;
+        pinColorInput.value = pin.color;
+        pinAddBtn.classList.remove('active');
+        pinAddBtn.textContent = 'Guardar cambios';
+        pinHint.textContent = 'Editando: cambia nombre o color y pulsa "Guardar cambios".';
+        pinMode = false;
+        map.getContainer().style.cursor = '';
+      } else if (btn.classList.contains('pin-del')) {
+        pins = pins.filter(function (p) { return String(p.id) !== String(pin.id); });
+        savePins();
+        if (String(editingPinId) === String(pin.id)) resetPinForm();
+        renderPins();
+      }
+    });
+
+    renderPins();
 
     refreshStatus();
   </script>

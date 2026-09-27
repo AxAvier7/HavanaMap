@@ -4,7 +4,7 @@ Mapa interactivo de **La Habana, Cuba** que puedes usar **sin conexión a intern
 
 ## ¿Qué es?
 
-Una página web con el mapa de La Habana sobre la que puedes hacer zoom (con los botones **+ / −** o la rueda del mouse) y moverte libremente. En la primera visita, la página descarga el mapa para que luego funcione aunque no tengas conexión.
+Una página web con el mapa de La Habana sobre la que puedes hacer zoom (con la **rueda del mouse** o gestos táctiles) y moverte libremente. En la primera visita, la página descarga el mapa para que luego funcione aunque no tengas conexión. También puedes **guardar tus lugares favoritos** con pines de colores.
 
 ## Cómo usarla
 
@@ -18,14 +18,23 @@ Una página web con el mapa de La Habana sobre la que puedes hacer zoom (con los
 3. **Primera visita (con internet):** verás una barra de progreso en la esquina superior derecha mientras se descarga el mapa. Cuando el punto se ponga **verde**, el mapa ya está listo para usarse sin conexión.
 4. **Visitas siguientes (incluso sin internet):** el mapa se carga solo, sin descargar de nuevo.
 
+### Guardar lugares con pines
+
+En el panel **"Mis ubicaciones"**, debajo de *"Descargar mapa"*:
+
+1. Escribe un **nombre** (opcional) y elige un **color**.
+2. Pulsa **"+ Añadir pin en el mapa"** y haz clic en el punto que quieras.
+3. El pin queda guardado en tu dispositivo y aparece en la lista.
+4. Desde la lista puedes **Ir** al lugar, **Editar** su nombre o color y **eliminarlo** (✕).
+
 ## Controles principales
 
 | Control | Qué hace |
 | ------- | -------- |
-| Botones **+ / −** | Acercar / alejar el mapa |
 | Rueda del mouse | Acercar / alejar el mapa |
 | Arrastrar el mapa | Moverse por La Habana |
 | Selector "Descargar mapa hasta el zoom" | Elegir el nivel de detalle descargado |
+| Panel "Mis ubicaciones" | Añadir pines de colores y guardar lugares |
 
 ## Preguntas frecuentes
 
@@ -40,6 +49,9 @@ Sí. Expande el panel *"Descargar mapa"* (clic sobre el título), elige otro niv
 
 **¿Se guarda en mi dispositivo?**
 Sí. Los datos del mapa se guardan en el almacenamiento local de tu navegador, así que no se vuelven a descargar en cada visita.
+
+**¿Mis ubicaciones se sincronizan con otros dispositivos?**
+No. Los pines se guardan solo en el navegador y dispositivo donde los creaste.
 
 ## Notas legales
 
