@@ -30,15 +30,15 @@
     .download-panel label { display: block; margin-bottom: 4px; }
     .download-panel select { width: 100%; font-size: 12px; }
     .download-panel small { display: block; margin-top: 4px; color: #ccc; }
-    .download-panel .dp-header {
+    .dp-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
       cursor: pointer;
     }
-    .download-panel .dp-title { font-weight: bold; }
-    .download-panel .dp-toggle {
+    .dp-title { font-weight: bold; }
+    .dp-toggle {
       background: rgba(255, 255, 255, 0.25);
       color: #fff;
       border: none;
@@ -61,7 +61,8 @@
       font-size: 12px;
       max-width: 220px;
     }
-    .pins-title { font-weight: bold; display: block; margin-bottom: 6px; }
+    .pins-panel.collapsed { padding: 4px 8px; }
+    .pins-panel.collapsed .pins-body { display: none; }
     .pins-form input[type="text"] {
       width: 100%;
       box-sizing: border-box;
@@ -181,20 +182,25 @@
       </div>
     </div>
     <div class="pins-panel" id="pinsPanel">
-      <span class="pins-title">Mis ubicaciones</span>
-      <div class="pins-form">
-        <input type="text" id="pinName" placeholder="Nombre del lugar" maxlength="40" />
-        <select id="pinColor">
-          <option value="#e63946">Rojo</option>
-          <option value="#457b9d">Azul</option>
-          <option value="#2a9d8f">Verde</option>
-          <option value="#e9c46a">Amarillo</option>
-          <option value="#9b5de5">Morado</option>
-        </select>
-        <button id="pinAddBtn" type="button">+ Añadir pin en el mapa</button>
-        <small class="hint" id="pinHint"></small>
+      <div class="dp-header" id="pinsHeader" title="Minimizar / expandir">
+        <span class="dp-title">Mis ubicaciones</span>
+        <button id="pinsToggle" type="button" class="dp-toggle">−</button>
       </div>
-      <ul id="pinList"></ul>
+      <div class="pins-body">
+        <div class="pins-form">
+          <input type="text" id="pinName" placeholder="Nombre del lugar" maxlength="40" />
+          <select id="pinColor">
+            <option value="#e63946">Rojo</option>
+            <option value="#457b9d">Azul</option>
+            <option value="#2a9d8f">Verde</option>
+            <option value="#e9c46a">Amarillo</option>
+            <option value="#9b5de5">Morado</option>
+          </select>
+          <button id="pinAddBtn" type="button">+ Añadir pin en el mapa</button>
+          <small class="hint" id="pinHint"></small>
+        </div>
+        <ul id="pinList"></ul>
+      </div>
     </div>
   </div>
   <div id="offline-status" class="offline-status" hidden></div>
@@ -643,6 +649,30 @@
         if (String(editingPinId) === String(pin.id)) resetPinForm();
         renderPins();
       }
+    });
+
+    var pinsPanel = document.getElementById('pinsPanel');
+    var pinsToggle = document.getElementById('pinsToggle');
+
+    function collapsePinsPanel() {
+      pinsPanel.classList.add('collapsed');
+      pinsToggle.textContent = '+';
+    }
+
+    function expandPinsPanel() {
+      pinsPanel.classList.remove('collapsed');
+      pinsToggle.textContent = '−';
+    }
+
+    document.getElementById('pinsHeader').addEventListener('click', function () {
+      if (pinsPanel.classList.contains('collapsed')) expandPinsPanel();
+      else collapsePinsPanel();
+    });
+
+    pinsToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pinsPanel.classList.contains('collapsed')) expandPinsPanel();
+      else collapsePinsPanel();
     });
 
     renderPins();
