@@ -1,6 +1,6 @@
 'use strict';
 
-var CACHE_NAME = 'havanamap-shell-v1';
+var CACHE_NAME = 'havanamap-shell-v2';
 var SHELL_URLS = [
   './index.html',
   './offline.js',
