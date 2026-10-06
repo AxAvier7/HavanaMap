@@ -116,7 +116,13 @@
       gap: 4px;
       margin-bottom: 4px;
     }
-    .routing-row > span { flex: none; width: 48px; }
+    .routing-row > span { flex: none; width: 56px; }
+    .routing-row select {
+      flex: 1;
+      font-size: 11px;
+      min-width: 0;
+      padding: 2px;
+    }
     .routing-btn {
       flex: 1;
       padding: 3px 4px;
@@ -267,6 +273,14 @@
         <button id="routingToggle" type="button" class="dp-toggle">−</button>
       </div>
       <div class="routing-body">
+        <div class="routing-row">
+          <span>Desde pin</span>
+          <select id="routeOriginPin" title="Elegir origen desde una ubicación guardada"></select>
+        </div>
+        <div class="routing-row">
+          <span>Hasta pin</span>
+          <select id="routeDestPin" title="Elegir destino desde una ubicación guardada"></select>
+        </div>
         <div class="routing-row">
           <span>Origen</span>
           <button id="routeOriginBtn" type="button" class="routing-btn">Seleccionar</button>
@@ -664,6 +678,7 @@
         pinHint.textContent = 'Aún no hay ubicaciones guardadas.';
       }
       if (pinsCount) pinsCount.textContent = pins.length ? '(' + pins.length + ')' : '';
+      if (routeOriginPin && routeDestPin) populateRouteSelects();
     }
 
     pinAddBtn.addEventListener('click', function () {
@@ -694,15 +709,18 @@
       if (pickingMode) {
         if (pickingMode === 'origin') {
           origin = { lat: e.latlng.lat, lng: e.latlng.lng };
+          originPinId = null;
           deactivateRoutingPicking();
           setRoutingInfo('Origen marcado. Ahora elige el destino.');
         } else {
           dest = { lat: e.latlng.lat, lng: e.latlng.lng };
+          destPinId = null;
           deactivateRoutingPicking();
           setRoutingInfo('Destino marcado. Pulsa "Trazar ruta".');
         }
         renderRouteMarkers();
         updateRouteButtons();
+        syncRouteSelects();
         return;
       }
       if (!pinMode) return;
@@ -798,6 +816,8 @@
     /* ===== Rutas ===== */
     var origin = null;
     var dest = null;
+    var originPinId = null;
+    var destPinId = null;
     var pickingMode = null;
     var routeMarkersLayer = L.layerGroup().addTo(map);
     var routeLineLayer = L.layerGroup().addTo(map);
@@ -805,6 +825,8 @@
     var routeOriginBtn = document.getElementById('routeOriginBtn');
     var routeDestBtn = document.getElementById('routeDestBtn');
     var routeGoBtn = document.getElementById('routeGoBtn');
+    var routeOriginPin = document.getElementById('routeOriginPin');
+    var routeDestPin = document.getElementById('routeDestPin');
 
     function setRoutingInfo(msg) {
       if (routeInfoEl) routeInfoEl.textContent = msg;
@@ -816,6 +838,50 @@
       routeDestBtn.classList.remove('active');
       map.getContainer().style.cursor = '';
     }
+
+    function populateRouteSelects() {
+      var opts = ['<option value="">— Usar clic en el mapa —</option>'];
+      pins.forEach(function (p) {
+        opts.push('<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + '</option>');
+      });
+      routeOriginPin.innerHTML = opts.join('');
+      routeDestPin.innerHTML = opts.join('');
+      syncRouteSelects();
+    }
+
+    function syncRouteSelects() {
+      if (originPinId && !findPin(originPinId)) { origin = null; originPinId = null; }
+      if (destPinId && !findPin(destPinId)) { dest = null; destPinId = null; }
+      routeOriginPin.value = originPinId ? String(originPinId) : '';
+      routeDestPin.value = destPinId ? String(destPinId) : '';
+      renderRouteMarkers();
+      updateRouteButtons();
+    }
+
+    function setRouteEndpointFromPin(side, pinId) {
+      var pin = findPin(pinId);
+      if (side === 'origin') {
+        origin = pin ? { lat: pin.lat, lng: pin.lng } : null;
+        originPinId = pin ? String(pin.id) : null;
+      } else {
+        dest = pin ? { lat: pin.lat, lng: pin.lng } : null;
+        destPinId = pin ? String(pin.id) : null;
+      }
+      deactivateRoutingPicking();
+      renderRouteMarkers();
+      updateRouteButtons();
+      setRoutingInfo(pin
+        ? (side === 'origin' ? 'Origen: ' : 'Destino: ') + pin.name
+        : (side === 'origin' ? 'Origen quitado.' : 'Destino quitado.'));
+    }
+
+    routeOriginPin.addEventListener('change', function () {
+      setRouteEndpointFromPin('origin', routeOriginPin.value);
+    });
+
+    routeDestPin.addEventListener('change', function () {
+      setRouteEndpointFromPin('dest', routeDestPin.value);
+    });
 
     function makeRouteMarker(p, color, label) {
       return L.circleMarker([p.lat, p.lng], {
@@ -841,9 +907,12 @@
     function clearRoute() {
       origin = null;
       dest = null;
+      originPinId = null;
+      destPinId = null;
       deactivateRoutingPicking();
       routeMarkersLayer.clearLayers();
       routeLineLayer.clearLayers();
+      syncRouteSelects();
       updateRouteButtons();
       setRoutingInfo('Elige origen y destino en el mapa.');
     }
@@ -924,17 +993,19 @@
 
     document.getElementById('routeOriginClear').addEventListener('click', function () {
       origin = null;
+      originPinId = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
-      updateRouteButtons();
+      syncRouteSelects();
       setRoutingInfo('Origen quitado.');
     });
 
     document.getElementById('routeDestClear').addEventListener('click', function () {
       dest = null;
+      destPinId = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
-      updateRouteButtons();
+      syncRouteSelects();
       setRoutingInfo('Destino quitado.');
     });
 
@@ -943,6 +1014,7 @@
 
     renderRouteMarkers();
     updateRouteButtons();
+    populateRouteSelects();
 
     var routingPanel = document.getElementById('routingPanel');
     var routingToggle = document.getElementById('routingToggle');

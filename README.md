@@ -31,10 +31,9 @@ En el panel **"Mis ubicaciones"**, debajo de *"Descargar mapa"*:
 
 En el panel **"Trazar ruta"** (debajo de *"Mis ubicaciones"*):
 
-1. Pulsa **"Seleccionar"** junto a *Origen* y haz clic en el punto de partida.
-2. Pulsa **"Seleccionar"** junto a *Destino* y haz clic en el punto de llegada.
-3. Pulsa **"Trazar ruta"**. Se dibuja la ruta más corta por carretera y se muestra la **distancia** y el **tiempo** estimado.
-4. Puedes quitar origen/destino con **✕** o borrar todo con **"Limpiar ruta"**.
+1. Elige el origen y el destino. Puedes marcarlos en el mapa (pulsa **"Seleccionar"** junto a *Origen*/*Destino* y haz clic) o escoger un **pin guardado** en los desplegables *"Desde pin"* / *"Hasta pin"*.
+2. Pulsa **"Trazar ruta"**. Se dibuja la ruta más corta por carretera y se muestra la **distancia** y el **tiempo** estimado.
+3. Puedes quitar origen/destino con **✕** o borrar todo con **"Limpiar ruta"**.
 
 > Nota: el cálculo de rutas necesita **internet** (usa el servicio público de rutas de OpenStreetMap). El ver el mapa sigue funcionando sin conexión.
 
