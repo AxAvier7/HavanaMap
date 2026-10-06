@@ -952,32 +952,54 @@
       };
     }
 
+    function haversineKm(a, b) {
+      var R = 6371;
+      var dLat = (b.lat - a.lat) * Math.PI / 180;
+      var dLng = (b.lng - a.lng) * Math.PI / 180;
+      var la1 = a.lat * Math.PI / 180;
+      var la2 = b.lat * Math.PI / 180;
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(la1) * Math.cos(la2) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    function drawOfflineFallback(reason) {
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(
+        [[origin.lat, origin.lng], [dest.lat, dest.lng]],
+        { color: '#757575', weight: 4, opacity: 0.8, dashArray: '6 8' }
+      ));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var km = haversineKm(origin, dest);
+      var dist = km >= 1 ? km.toFixed(1) + ' km' : Math.round(km * 1000) + ' m';
+      setRoutingInfo((reason ? reason + ' ' : '') +
+        'Sin conexión al servicio de rutas. Distancia en línea recta: ' + dist + '.');
+    }
+
     function traceRoute() {
       if (!origin || !dest) return;
+      routeGoBtn.disabled = true;
+      if (navigator.onLine === false) {
+        routeGoBtn.disabled = !(origin && dest);
+        drawOfflineFallback('Estás sin conexión.');
+        return;
+      }
+      setRoutingInfo('Calculando ruta...');
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
-      var osrmServers = [
-        'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
-        'https://router.project-osrm.org/route/v1/driving/'
-      ];
-      var requests = osrmServers.map(function (s) {
-        return {
-          kind: 'osrm',
-          url: s + coords + '?overview=full&geometries=geojson'
-        };
-      });
-      requests.push({
-        kind: 'valhalla',
-        url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
+      var requests = [
+        { kind: 'osrm', url: 'https://routing.openstreetmap.de/routed-car/route/v1/driving/' + coords + '?overview=full&geometries=geojson' },
+        { kind: 'osrm', url: 'https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson' },
+        { kind: 'valhalla', url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
           locations: [
             { lat: origin.lat, lon: origin.lng },
             { lat: dest.lat, lon: dest.lng }
           ],
           costing: 'auto',
           units: 'kilometers'
-        }))
-      });
-      routeGoBtn.disabled = true;
-      setRoutingInfo('Calculando ruta...');
+        })) }
+      ];
       function fetchWithTimeout(url, ms) {
         return new Promise(function (resolve, reject) {
           var done = false;
@@ -1001,27 +1023,39 @@
           });
         });
       }
-      var finished = false;
+      var settled = false;
       var pending = requests.length;
+      function finish(okFn) {
+        if (settled) return;
+        settled = true;
+        okFn();
+      }
+      setTimeout(function () {
+        finish(function () {
+          routeGoBtn.disabled = !(origin && dest);
+          drawOfflineFallback('No respondió ningún servicio de rutas.');
+        });
+      }, 25000);
       requests.forEach(function (req) {
-        fetchWithTimeout(req.url, 15000).then(function (res) {
-          if (finished) return;
+        fetchWithTimeout(req.url, 12000).then(function (res) {
+          if (settled) return;
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.json();
         }).then(function (json) {
-          if (finished) return;
+          if (settled) return;
           var route = req.kind === 'valhalla' ? extractValhallaRoute(json) : extractOsrmRoute(json);
           if (!route) throw new Error('sin ruta');
-          finished = true;
-          drawRoute(route);
-          routeGoBtn.disabled = !(origin && dest);
+          finish(function () {
+            drawRoute(route);
+            routeGoBtn.disabled = !(origin && dest);
+          });
         }).catch(function () {
           pending--;
-          if (pending === 0 && !finished) {
-            finished = true;
-            routeGoBtn.disabled = !(origin && dest);
-            setRoutingInfo('No se pudo calcular la ruta por las calles. El servicio no respondió. ' +
-              'Revisa tu conexión y pulsa "Trazar ruta" para reintentar.');
+          if (pending === 0 && !settled) {
+            finish(function () {
+              routeGoBtn.disabled = !(origin && dest);
+              drawOfflineFallback('No respondió ningún servicio de rutas.');
+            });
           }
         });
       });
