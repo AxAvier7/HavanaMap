@@ -920,22 +920,64 @@
         '. Distancia: ' + formatDistance(route.distance));
     }
 
+    function decodePolyline6(str) {
+      var pts = [], index = 0, lat = 0, lng = 0;
+      while (index < str.length) {
+        var b, shift = 0, result = 0;
+        do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 32);
+        var dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lat += dlat;
+        shift = 0; result = 0;
+        do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 32);
+        var dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lng += dlng;
+        pts.push([lat / 1e6, lng / 1e6]);
+      }
+      return pts;
+    }
+
+    function extractOsrmRoute(json) {
+      if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
+      return null;
+    }
+
+    function extractValhallaRoute(json) {
+      var leg = json && json.trip && json.trip.legs && json.trip.legs[0];
+      if (!leg || !leg.shape || !leg.summary) return null;
+      var coords = decodePolyline6(leg.shape);
+      if (!coords.length) return null;
+      return {
+        distance: leg.summary.length * 1000,
+        geometry: { type: 'LineString', coordinates: coords.map(function (p) { return [p[1], p[0]]; }) }
+      };
+    }
+
     function traceRoute() {
       if (!origin || !dest) return;
-      var servers = [
+      var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
+      var osrmServers = [
         'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
         'https://router.project-osrm.org/route/v1/driving/'
       ];
-      var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
-      var endpoints = servers.map(function (s) {
-        return s + coords + '?overview=full&geometries=geojson';
+      var requests = osrmServers.map(function (s) {
+        return {
+          kind: 'osrm',
+          url: s + coords + '?overview=full&geometries=geojson'
+        };
+      });
+      requests.push({
+        kind: 'valhalla',
+        url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
+          locations: [
+            { lat: origin.lat, lon: origin.lng },
+            { lat: dest.lat, lon: dest.lng }
+          ],
+          costing: 'auto',
+          units: 'kilometers'
+        }))
       });
       routeGoBtn.disabled = true;
       setRoutingInfo('Calculando ruta...');
-      function extractRoute(json) {
-        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
-        return null;
-      }
       function fetchWithTimeout(url, ms) {
         return new Promise(function (resolve, reject) {
           var done = false;
@@ -959,27 +1001,30 @@
           });
         });
       }
-      function attempt(i) {
-        if (i >= endpoints.length) {
-          routeGoBtn.disabled = !(origin && dest);
-          setRoutingInfo('No se pudo calcular la ruta por las calles. El servicio no respondió. ' +
-            'Revisa tu conexión y pulsa "Trazar ruta" para reintentar.');
-          return;
-        }
-        setRoutingInfo('Calculando ruta... (intento ' + (i + 1) + ' de ' + endpoints.length + ')');
-        fetchWithTimeout(endpoints[i], 8000).then(function (res) {
+      var finished = false;
+      var pending = requests.length;
+      requests.forEach(function (req) {
+        fetchWithTimeout(req.url, 15000).then(function (res) {
+          if (finished) return;
           if (!res.ok) throw new Error('HTTP ' + res.status);
           return res.json();
         }).then(function (json) {
-          var route = extractRoute(json);
+          if (finished) return;
+          var route = req.kind === 'valhalla' ? extractValhallaRoute(json) : extractOsrmRoute(json);
           if (!route) throw new Error('sin ruta');
+          finished = true;
           drawRoute(route);
           routeGoBtn.disabled = !(origin && dest);
         }).catch(function () {
-          attempt(i + 1);
+          pending--;
+          if (pending === 0 && !finished) {
+            finished = true;
+            routeGoBtn.disabled = !(origin && dest);
+            setRoutingInfo('No se pudo calcular la ruta por las calles. El servicio no respondió. ' +
+              'Revisa tu conexión y pulsa "Trazar ruta" para reintentar.');
+          }
         });
-      }
-      attempt(0);
+      });
     }
 
     routeOriginBtn.addEventListener('click', function () {
