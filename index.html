@@ -277,6 +277,11 @@
           <button id="routeDestBtn" type="button" class="routing-btn">Seleccionar</button>
           <button id="routeDestClear" type="button" class="routing-btn" title="Quitar destino">✕</button>
         </div>
+        <div class="routing-row">
+          <span>Modo</span>
+          <button id="routeModeCar" type="button" class="routing-btn active">Vehículo</button>
+          <button id="routeModeFoot" type="button" class="routing-btn">A pie</button>
+        </div>
         <button id="routeGoBtn" type="button" class="routing-primary">Trazar ruta</button>
         <button id="routeClearBtn" type="button" style="margin-top:4px">Limpiar ruta</button>
         <small class="hint" id="routeInfo">Elige origen y destino en el mapa.</small>
@@ -824,6 +829,8 @@
     var routeOriginBtn = document.getElementById('routeOriginBtn');
     var routeDestBtn = document.getElementById('routeDestBtn');
     var routeGoBtn = document.getElementById('routeGoBtn');
+    var routeMode = 'car';
+    var routeModeLabel = 'Vehículo';
 
     function setRoutingInfo(msg) {
       if (routeInfoEl) routeInfoEl.textContent = msg;
@@ -916,8 +923,8 @@
       ));
       renderRouteMarkers();
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
-      setRoutingInfo('Ruta de ' + pointLabel(originPin, origin) + ' a ' + pointLabel(destPin, dest) +
-        '. Distancia: ' + formatDistance(route.distance));
+      setRoutingInfo('Ruta (' + routeModeLabel + ') de ' + pointLabel(originPin, origin) + ' a ' +
+        pointLabel(destPin, dest) + '. Distancia: ' + formatDistance(route.distance));
     }
 
     function decodePolyline6(str) {
@@ -988,18 +995,30 @@
       }
       setRoutingInfo('Calculando ruta...');
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
-      var requests = [
-        { kind: 'osrm', url: 'https://routing.openstreetmap.de/routed-car/route/v1/driving/' + coords + '?overview=full&geometries=geojson' },
-        { kind: 'osrm', url: 'https://router.project-osrm.org/route/v1/driving/' + coords + '?overview=full&geometries=geojson' },
-        { kind: 'valhalla', url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
+      var costings = { car: 'auto', foot: 'pedestrian' };
+      var osrmServers = routeMode === 'car'
+        ? [
+          'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
+          'https://router.project-osrm.org/route/v1/driving/'
+        ]
+        : [
+          'https://routing.openstreetmap.de/routed-foot/route/v1/walking/',
+          'https://router.project-osrm.org/route/v1/foot/'
+        ];
+      var requests = osrmServers.map(function (s) {
+        return { kind: 'osrm', url: s + coords + '?overview=full&geometries=geojson' };
+      });
+      requests.push({
+        kind: 'valhalla',
+        url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
           locations: [
             { lat: origin.lat, lon: origin.lng },
             { lat: dest.lat, lon: dest.lng }
           ],
-          costing: 'auto',
+          costing: costings[routeMode],
           units: 'kilometers'
-        })) }
-      ];
+        }))
+      });
       function fetchWithTimeout(url, ms) {
         return new Promise(function (resolve, reject) {
           var done = false;
@@ -1107,6 +1126,23 @@
 
     document.getElementById('routeClearBtn').addEventListener('click', clearRoute);
     routeGoBtn.addEventListener('click', traceRoute);
+
+    document.getElementById('routeModeCar').addEventListener('click', function () {
+      if (routeMode === 'car') return;
+      routeMode = 'car';
+      routeModeLabel = 'Vehículo';
+      document.getElementById('routeModeCar').classList.add('active');
+      document.getElementById('routeModeFoot').classList.remove('active');
+      setRoutingInfo('Modo de ruta: Vehículo.');
+    });
+    document.getElementById('routeModeFoot').addEventListener('click', function () {
+      if (routeMode === 'foot') return;
+      routeMode = 'foot';
+      routeModeLabel = 'A pie';
+      document.getElementById('routeModeFoot').classList.add('active');
+      document.getElementById('routeModeCar').classList.remove('active');
+      setRoutingInfo('Modo de ruta: A pie.');
+    });
 
     renderRouteMarkers();
     updateRouteButtons();
