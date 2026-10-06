@@ -930,7 +930,7 @@
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
       var km = haversineKm(origin, dest);
       var dist = km >= 1 ? km.toFixed(1) + ' km' : Math.round(km * 1000) + ' m';
-      setRoutingInfo('No está disponible el servicio de rutas. Distancia en línea recta: ' + dist +
+      setRoutingInfo('No se pudo calcular la ruta por las calles. Solo distancia en línea recta: ' + dist +
         '. Pulsa "Trazar ruta" para reintentar.');
     }
 
@@ -946,6 +946,44 @@
         '. Distancia: ' + formatDistance(route.distance));
     }
 
+    function withTimeout(p, ms) {
+      return new Promise(function (resolve, reject) {
+        var timer = setTimeout(function () { reject(new Error('timeout')); }, ms);
+        p.then(
+          function (v) { clearTimeout(timer); resolve(v); },
+          function (e) { clearTimeout(timer); reject(e); }
+        );
+      });
+    }
+
+    function fetchRoute(url, proxied) {
+      return withTimeout(fetch(url), 10000).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then(function (json) {
+        if (proxied && json && typeof json.contents === 'string') {
+          try { json = JSON.parse(json.contents); } catch (e) { throw new Error('proxy inválido'); }
+        }
+        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
+        throw new Error('sin ruta');
+      });
+    }
+
+    function promiseAny(promises) {
+      if (typeof Promise.any === 'function') return Promise.any(promises);
+      return new Promise(function (resolve, reject) {
+        var pending = promises.length;
+        var errors = [];
+        if (!pending) return reject(new Error('sin endpoints'));
+        promises.forEach(function (p, i) {
+          p.then(resolve, function (e) {
+            errors[i] = e;
+            if (--pending === 0) reject(new Error('fallaron todos los endpoints'));
+          });
+        });
+      });
+    }
+
     function traceRoute() {
       if (!origin || !dest) return;
       var servers = [
@@ -953,48 +991,22 @@
         'https://router.project-osrm.org/route/v1/driving/'
       ];
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
-      var endpoints = [];
+      var tries = [];
       servers.forEach(function (s) {
-        var direct = s + coords + '?overview=full&geometries=geojson';
-        endpoints.push({ url: direct });
+        var params = '?overview=full&geometries=geojson';
+        var direct = s + coords + params;
+        tries.push(fetchRoute(direct, false));
+        tries.push(fetchRoute('https://api.allorigins.win/get?url=' + encodeURIComponent(direct), true));
       });
-      endpoints.push({ url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(
-        servers[0] + coords + '?overview=full&geometries=geojson'
-      ), proxied: true });
       routeGoBtn.disabled = true;
-      setRoutingInfo('Calculando ruta...');
-      function extractRoute(json) {
-        if (json && typeof json.contents === 'string') {
-          try { json = JSON.parse(json.contents); } catch (e) { return null; }
-        }
-        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
-        return null;
-      }
-      function attempt(i) {
-        if (i >= endpoints.length) {
-          routeGoBtn.disabled = !(origin && dest);
-          drawStraightLine();
-          return;
-        }
-        var controller = window.AbortController ? new AbortController() : null;
-        var timer = controller === null ? null : setTimeout(function () { controller.abort(); }, 12000);
-        var opts = {};
-        if (controller) opts.signal = controller.signal;
-        fetch(endpoints[i].url, opts).then(function (res) {
-          if (timer) clearTimeout(timer);
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          return res.json();
-        }).then(function (json) {
-          var route = extractRoute(json);
-          if (!route) throw new Error('sin ruta');
-          drawRoute(route);
-          routeGoBtn.disabled = !(origin && dest);
-        }).catch(function () {
-          if (timer) clearTimeout(timer);
-          attempt(i + 1);
-        });
-      }
-      attempt(0);
+      setRoutingInfo('Calculando ruta por las calles...');
+      promiseAny(tries).then(function (route) {
+        routeGoBtn.disabled = !(origin && dest);
+        drawRoute(route);
+      }).catch(function () {
+        routeGoBtn.disabled = !(origin && dest);
+        drawStraightLine();
+      });
     }
 
     routeOriginBtn.addEventListener('click', function () {
