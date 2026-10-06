@@ -908,6 +908,32 @@
         : Math.round(meters) + ' m';
     }
 
+    function haversineKm(a, b) {
+      var R = 6371;
+      var dLat = (b.lat - a.lat) * Math.PI / 180;
+      var dLng = (b.lng - a.lng) * Math.PI / 180;
+      var la1 = a.lat * Math.PI / 180;
+      var la2 = b.lat * Math.PI / 180;
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(la1) * Math.cos(la2) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    function drawStraightLine() {
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(
+        [[origin.lat, origin.lng], [dest.lat, dest.lng]],
+        { color: '#2196f3', weight: 4, opacity: 0.7, dashArray: '8 8' }
+      ));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var km = haversineKm(origin, dest);
+      var dist = km >= 1 ? km.toFixed(1) + ' km' : Math.round(km * 1000) + ' m';
+      setRoutingInfo('No está disponible el servicio de rutas. Distancia en línea recta: ' + dist +
+        '. Pulsa "Trazar ruta" para reintentar.');
+    }
+
     function drawRoute(route) {
       routeLineLayer.clearLayers();
       routeLineLayer.addLayer(L.polyline(
@@ -931,8 +957,10 @@
       servers.forEach(function (s) {
         var direct = s + coords + '?overview=full&geometries=geojson';
         endpoints.push({ url: direct });
-        endpoints.push({ url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(direct), proxied: true });
       });
+      endpoints.push({ url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(
+        servers[0] + coords + '?overview=full&geometries=geojson'
+      ), proxied: true });
       routeGoBtn.disabled = true;
       setRoutingInfo('Calculando ruta...');
       function extractRoute(json) {
@@ -945,11 +973,11 @@
       function attempt(i) {
         if (i >= endpoints.length) {
           routeGoBtn.disabled = !(origin && dest);
-          setRoutingInfo('No se pudo calcular la ruta. Revisa tu conexión o inténtalo de nuevo más tarde.');
+          drawStraightLine();
           return;
         }
         var controller = window.AbortController ? new AbortController() : null;
-        var timer = controller === null ? null : setTimeout(function () { controller.abort(); }, 20000);
+        var timer = controller === null ? null : setTimeout(function () { controller.abort(); }, 12000);
         var opts = {};
         if (controller) opts.signal = controller.signal;
         fetch(endpoints[i].url, opts).then(function (res) {
@@ -961,7 +989,10 @@
           if (!route) throw new Error('sin ruta');
           drawRoute(route);
           routeGoBtn.disabled = !(origin && dest);
-        }).catch(function () { attempt(i + 1); });
+        }).catch(function () {
+          if (timer) clearTimeout(timer);
+          attempt(i + 1);
+        });
       }
       attempt(0);
     }
