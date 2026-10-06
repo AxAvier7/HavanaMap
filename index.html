@@ -908,32 +908,6 @@
         : Math.round(meters) + ' m';
     }
 
-    function haversineKm(a, b) {
-      var R = 6371;
-      var dLat = (b.lat - a.lat) * Math.PI / 180;
-      var dLng = (b.lng - a.lng) * Math.PI / 180;
-      var la1 = a.lat * Math.PI / 180;
-      var la2 = b.lat * Math.PI / 180;
-      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(la1) * Math.cos(la2) *
-        Math.sin(dLng / 2) * Math.sin(dLng / 2);
-      return 2 * R * Math.asin(Math.sqrt(h));
-    }
-
-    function drawStraightLine() {
-      routeLineLayer.clearLayers();
-      routeLineLayer.addLayer(L.polyline(
-        [[origin.lat, origin.lng], [dest.lat, dest.lng]],
-        { color: '#2196f3', weight: 4, opacity: 0.7, dashArray: '8 8' }
-      ));
-      renderRouteMarkers();
-      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
-      var km = haversineKm(origin, dest);
-      var dist = km >= 1 ? km.toFixed(1) + ' km' : Math.round(km * 1000) + ' m';
-      setRoutingInfo('No se pudo calcular la ruta por las calles. Solo distancia en línea recta: ' + dist +
-        '. Pulsa "Trazar ruta" para reintentar.');
-    }
-
     function drawRoute(route) {
       routeLineLayer.clearLayers();
       routeLineLayer.addLayer(L.polyline(
@@ -946,44 +920,6 @@
         '. Distancia: ' + formatDistance(route.distance));
     }
 
-    function withTimeout(p, ms) {
-      return new Promise(function (resolve, reject) {
-        var timer = setTimeout(function () { reject(new Error('timeout')); }, ms);
-        p.then(
-          function (v) { clearTimeout(timer); resolve(v); },
-          function (e) { clearTimeout(timer); reject(e); }
-        );
-      });
-    }
-
-    function fetchRoute(url, proxied) {
-      return withTimeout(fetch(url), 10000).then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      }).then(function (json) {
-        if (proxied && json && typeof json.contents === 'string') {
-          try { json = JSON.parse(json.contents); } catch (e) { throw new Error('proxy inválido'); }
-        }
-        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
-        throw new Error('sin ruta');
-      });
-    }
-
-    function promiseAny(promises) {
-      if (typeof Promise.any === 'function') return Promise.any(promises);
-      return new Promise(function (resolve, reject) {
-        var pending = promises.length;
-        var errors = [];
-        if (!pending) return reject(new Error('sin endpoints'));
-        promises.forEach(function (p, i) {
-          p.then(resolve, function (e) {
-            errors[i] = e;
-            if (--pending === 0) reject(new Error('fallaron todos los endpoints'));
-          });
-        });
-      });
-    }
-
     function traceRoute() {
       if (!origin || !dest) return;
       var servers = [
@@ -991,22 +927,59 @@
         'https://router.project-osrm.org/route/v1/driving/'
       ];
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
-      var tries = [];
-      servers.forEach(function (s) {
-        var params = '?overview=full&geometries=geojson';
-        var direct = s + coords + params;
-        tries.push(fetchRoute(direct, false));
-        tries.push(fetchRoute('https://api.allorigins.win/get?url=' + encodeURIComponent(direct), true));
+      var endpoints = servers.map(function (s) {
+        return s + coords + '?overview=full&geometries=geojson';
       });
       routeGoBtn.disabled = true;
-      setRoutingInfo('Calculando ruta por las calles...');
-      promiseAny(tries).then(function (route) {
-        routeGoBtn.disabled = !(origin && dest);
-        drawRoute(route);
-      }).catch(function () {
-        routeGoBtn.disabled = !(origin && dest);
-        drawStraightLine();
-      });
+      setRoutingInfo('Calculando ruta...');
+      function extractRoute(json) {
+        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
+        return null;
+      }
+      function fetchWithTimeout(url, ms) {
+        return new Promise(function (resolve, reject) {
+          var done = false;
+          var timer = setTimeout(function () {
+            done = true;
+            reject(new Error('timeout'));
+          }, ms);
+          var controller = window.AbortController ? new AbortController() : null;
+          var opts = {};
+          if (controller) opts.signal = controller.signal;
+          fetch(url, opts).then(function (res) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(res);
+          }, function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+      }
+      function attempt(i) {
+        if (i >= endpoints.length) {
+          routeGoBtn.disabled = !(origin && dest);
+          setRoutingInfo('No se pudo calcular la ruta por las calles. El servicio no respondió. ' +
+            'Revisa tu conexión y pulsa "Trazar ruta" para reintentar.');
+          return;
+        }
+        setRoutingInfo('Calculando ruta... (intento ' + (i + 1) + ' de ' + endpoints.length + ')');
+        fetchWithTimeout(endpoints[i], 8000).then(function (res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        }).then(function (json) {
+          var route = extractRoute(json);
+          if (!route) throw new Error('sin ruta');
+          drawRoute(route);
+          routeGoBtn.disabled = !(origin && dest);
+        }).catch(function () {
+          attempt(i + 1);
+        });
+      }
+      attempt(0);
     }
 
     routeOriginBtn.addEventListener('click', function () {
