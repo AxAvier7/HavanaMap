@@ -927,27 +927,41 @@
         'https://router.project-osrm.org/route/v1/driving/'
       ];
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
+      var endpoints = [];
+      servers.forEach(function (s) {
+        var direct = s + coords + '?overview=full&geometries=geojson';
+        endpoints.push({ url: direct });
+        endpoints.push({ url: 'https://api.allorigins.win/get?url=' + encodeURIComponent(direct), proxied: true });
+      });
       routeGoBtn.disabled = true;
       setRoutingInfo('Calculando ruta...');
+      function extractRoute(json) {
+        if (json && typeof json.contents === 'string') {
+          try { json = JSON.parse(json.contents); } catch (e) { return null; }
+        }
+        if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
+        return null;
+      }
       function attempt(i) {
-        if (i >= servers.length) {
+        if (i >= endpoints.length) {
           routeGoBtn.disabled = !(origin && dest);
-          setRoutingInfo('No se pudo calcular la ruta. Revisa la conexión a internet.');
+          setRoutingInfo('No se pudo calcular la ruta. Revisa tu conexión o inténtalo de nuevo más tarde.');
           return;
         }
-        fetch(servers[i] + coords + '?overview=full&geometries=geojson')
-          .then(function (res) {
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            return res.json();
-          })
-          .then(function (data) {
-            if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
-              throw new Error('sin ruta');
-            }
-            drawRoute(data.routes[0]);
-            routeGoBtn.disabled = !(origin && dest);
-          })
-          .catch(function () { attempt(i + 1); });
+        var controller = window.AbortController ? new AbortController() : null;
+        var timer = controller === null ? null : setTimeout(function () { controller.abort(); }, 20000);
+        var opts = {};
+        if (controller) opts.signal = controller.signal;
+        fetch(endpoints[i].url, opts).then(function (res) {
+          if (timer) clearTimeout(timer);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        }).then(function (json) {
+          var route = extractRoute(json);
+          if (!route) throw new Error('sin ruta');
+          drawRoute(route);
+          routeGoBtn.disabled = !(origin && dest);
+        }).catch(function () { attempt(i + 1); });
       }
       attempt(0);
     }
