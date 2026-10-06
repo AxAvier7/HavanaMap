@@ -702,6 +702,7 @@
             lat: pin ? pin.lat : e.latlng.lat,
             lng: pin ? pin.lng : e.latlng.lng
           };
+          originPin = pin;
           deactivateRoutingPicking();
           setRoutingInfo(pin
             ? 'Origen: "' + pin.name + '". Ahora elige el destino.'
@@ -711,6 +712,7 @@
             lat: pin ? pin.lat : e.latlng.lat,
             lng: pin ? pin.lng : e.latlng.lng
           };
+          destPin = pin;
           deactivateRoutingPicking();
           setRoutingInfo(pin
             ? 'Destino: "' + pin.name + '". Pulsa "Trazar ruta".'
@@ -813,6 +815,8 @@
     /* ===== Rutas ===== */
     var origin = null;
     var dest = null;
+    var originPin = null;
+    var destPin = null;
     var pickingMode = null;
     var routeMarkersLayer = L.layerGroup().addTo(map);
     var routeLineLayer = L.layerGroup().addTo(map);
@@ -835,10 +839,12 @@
     function selectPickedPin(p) {
       if (pickingMode === 'origin') {
         origin = { lat: p.lat, lng: p.lng };
+        originPin = p;
         deactivateRoutingPicking();
         setRoutingInfo('Origen: "' + p.name + '". Ahora elige el destino.');
       } else if (pickingMode === 'dest') {
         dest = { lat: p.lat, lng: p.lng };
+        destPin = p;
         deactivateRoutingPicking();
         setRoutingInfo('Destino: "' + p.name + '". Pulsa "Trazar ruta".');
       } else {
@@ -882,11 +888,24 @@
     function clearRoute() {
       origin = null;
       dest = null;
+      originPin = null;
+      destPin = null;
       deactivateRoutingPicking();
       routeMarkersLayer.clearLayers();
       routeLineLayer.clearLayers();
       updateRouteButtons();
       setRoutingInfo('Elige origen y destino en el mapa.');
+    }
+
+    function pointLabel(pin, pos) {
+      if (pin && pin.name) return '"' + pin.name + '"';
+      return pos.lat.toFixed(4) + ', ' + pos.lng.toFixed(4);
+    }
+
+    function formatDistance(meters) {
+      return meters >= 1000
+        ? (meters / 1000).toFixed(1) + ' km'
+        : Math.round(meters) + ' m';
     }
 
     function drawRoute(route) {
@@ -897,12 +916,8 @@
       ));
       renderRouteMarkers();
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
-      var dist = route.distance >= 1000
-        ? (route.distance / 1000).toFixed(1) + ' km'
-        : Math.round(route.distance) + ' m';
-      var mins = Math.round(route.duration / 60);
-      var dur = mins < 1 ? '<1 min' : mins + ' min';
-      setRoutingInfo('Distancia: ' + dist + ' · Tiempo: ' + dur);
+      setRoutingInfo('Ruta de ' + pointLabel(originPin, origin) + ' a ' + pointLabel(destPin, dest) +
+        '. Distancia: ' + formatDistance(route.distance));
     }
 
     function traceRoute() {
@@ -965,6 +980,7 @@
 
     document.getElementById('routeOriginClear').addEventListener('click', function () {
       origin = null;
+      originPin = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
       updateRouteButtons();
@@ -973,6 +989,7 @@
 
     document.getElementById('routeDestClear').addEventListener('click', function () {
       dest = null;
+      destPin = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
       updateRouteButtons();
