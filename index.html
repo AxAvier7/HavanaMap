@@ -633,19 +633,13 @@
           fillColor: p.color,
           fillOpacity: 1
         }).addTo(pinLayer);
-        marker.bindPopup(
+        marker.bindTooltip(
           '<strong>' + escapeHtml(p.name) + '</strong><br>' +
-          '<span style="color:#999">' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</span>'
+          '<span style="color:#999">' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</span>',
+          { sticky: true, direction: 'top', offset: [0, -10], opacity: 0.95 }
         );
-        marker.on('add', function () {
-          var el = marker.getElement();
-          if (!el) return;
-          el.addEventListener('click', function (ev) {
-            if (!pickingMode) return;
-            ev.stopPropagation();
-            ev.preventDefault();
-            selectPickedPin(p);
-          }, true);
+        marker.on('click', function () {
+          if (pickingMode) selectPickedPin(p);
         });
 
         var li = document.createElement('li');
