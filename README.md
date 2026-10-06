@@ -27,6 +27,17 @@ En el panel **"Mis ubicaciones"**, debajo de *"Descargar mapa"*:
 3. El pin queda guardado en tu dispositivo y aparece en la lista.
 4. Desde la lista puedes **Ir** al lugar, **Editar** su nombre o color y **eliminarlo** (✕).
 
+### Trazar la ruta más corta
+
+En el panel **"Trazar ruta"** (debajo de *"Mis ubicaciones"*):
+
+1. Pulsa **"Seleccionar"** junto a *Origen* y haz clic en el punto de partida.
+2. Pulsa **"Seleccionar"** junto a *Destino* y haz clic en el punto de llegada.
+3. Pulsa **"Trazar ruta"**. Se dibuja la ruta más corta por carretera y se muestra la **distancia** y el **tiempo** estimado.
+4. Puedes quitar origen/destino con **✕** o borrar todo con **"Limpiar ruta"**.
+
+> Nota: el cálculo de rutas necesita **internet** (usa el servicio público de rutas de OpenStreetMap). El ver el mapa sigue funcionando sin conexión.
+
 ## Controles principales
 
 | Control | Qué hace |
@@ -35,6 +46,7 @@ En el panel **"Mis ubicaciones"**, debajo de *"Descargar mapa"*:
 | Arrastrar el mapa | Moverse por La Habana |
 | Selector "Descargar mapa hasta el zoom" | Elegir el nivel de detalle descargado |
 | Panel "Mis ubicaciones" | Añadir pines de colores y guardar lugares |
+| Panel "Trazar ruta" | Ruta más corta entre dos puntos + distancia y tiempo |
 
 ## Preguntas frecuentes
 

@@ -99,6 +99,48 @@
       overflow-y: auto;
     }
     #pinList.collapsed { display: none; }
+    .routing-panel {
+      background: rgba(0, 0, 0, 0.72);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 4px;
+      font-family: sans-serif;
+      font-size: 12px;
+      max-width: 220px;
+    }
+    .routing-panel.collapsed { padding: 4px 8px; }
+    .routing-panel.collapsed .routing-body { display: none; }
+    .routing-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 4px;
+    }
+    .routing-row > span { flex: none; width: 48px; }
+    .routing-btn {
+      flex: 1;
+      padding: 3px 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .routing-btn.active { background: #4caf50; color: #fff; border-color: #4caf50; }
+    .routing-primary {
+      width: 100%;
+      padding: 5px;
+      font-size: 12px;
+      cursor: pointer;
+      background: #2196f3;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+    }
+    .routing-primary:disabled { opacity: 0.5; cursor: default; }
+    .routing-body .hint {
+      display: block;
+      margin-top: 6px;
+      color: #ccc;
+      min-height: 14px;
+    }
     #pinList li {
       display: flex;
       align-items: center;
@@ -217,6 +259,27 @@
           <button id="pinsListToggle" type="button" class="dp-toggle">−</button>
         </div>
         <ul id="pinList"></ul>
+      </div>
+    </div>
+    <div class="routing-panel" id="routingPanel">
+      <div class="dp-header" id="routingHeader" title="Minimizar / expandir">
+        <span class="dp-title">Trazar ruta</span>
+        <button id="routingToggle" type="button" class="dp-toggle">−</button>
+      </div>
+      <div class="routing-body">
+        <div class="routing-row">
+          <span>Origen</span>
+          <button id="routeOriginBtn" type="button" class="routing-btn">Seleccionar</button>
+          <button id="routeOriginClear" type="button" class="routing-btn" title="Quitar origen">✕</button>
+        </div>
+        <div class="routing-row">
+          <span>Destino</span>
+          <button id="routeDestBtn" type="button" class="routing-btn">Seleccionar</button>
+          <button id="routeDestClear" type="button" class="routing-btn" title="Quitar destino">✕</button>
+        </div>
+        <button id="routeGoBtn" type="button" class="routing-primary">Trazar ruta</button>
+        <button id="routeClearBtn" type="button" style="margin-top:4px">Limpiar ruta</button>
+        <small class="hint" id="routeInfo">Elige origen y destino en el mapa.</small>
       </div>
     </div>
   </div>
@@ -628,6 +691,20 @@
     });
 
     map.on('click', function (e) {
+      if (pickingMode) {
+        if (pickingMode === 'origin') {
+          origin = { lat: e.latlng.lat, lng: e.latlng.lng };
+          deactivateRoutingPicking();
+          setRoutingInfo('Origen marcado. Ahora elige el destino.');
+        } else {
+          dest = { lat: e.latlng.lat, lng: e.latlng.lng };
+          deactivateRoutingPicking();
+          setRoutingInfo('Destino marcado. Pulsa "Trazar ruta".');
+        }
+        renderRouteMarkers();
+        updateRouteButtons();
+        return;
+      }
       if (!pinMode) return;
       var name = pinNameInput.value.trim() || ('Ubicación ' + (pins.length + 1));
       pins.push({
@@ -716,6 +793,179 @@
       e.stopPropagation();
       if (pinListEl.classList.contains('collapsed')) expandPinList();
       else collapsePinList();
+    });
+
+    /* ===== Rutas ===== */
+    var origin = null;
+    var dest = null;
+    var pickingMode = null;
+    var routeMarkersLayer = L.layerGroup().addTo(map);
+    var routeLineLayer = L.layerGroup().addTo(map);
+    var routeInfoEl = document.getElementById('routeInfo');
+    var routeOriginBtn = document.getElementById('routeOriginBtn');
+    var routeDestBtn = document.getElementById('routeDestBtn');
+    var routeGoBtn = document.getElementById('routeGoBtn');
+
+    function setRoutingInfo(msg) {
+      if (routeInfoEl) routeInfoEl.textContent = msg;
+    }
+
+    function deactivateRoutingPicking() {
+      pickingMode = null;
+      routeOriginBtn.classList.remove('active');
+      routeDestBtn.classList.remove('active');
+      map.getContainer().style.cursor = '';
+    }
+
+    function makeRouteMarker(p, color, label) {
+      return L.circleMarker([p.lat, p.lng], {
+        radius: 12,
+        color: '#fff',
+        weight: 2,
+        fillColor: color,
+        fillOpacity: 1
+      }).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -10], opacity: 0.9 })
+        .addTo(routeMarkersLayer);
+    }
+
+    function renderRouteMarkers() {
+      routeMarkersLayer.clearLayers();
+      if (origin) makeRouteMarker(origin, '#4caf50', 'Origen');
+      if (dest) makeRouteMarker(dest, '#e63946', 'Destino');
+    }
+
+    function updateRouteButtons() {
+      routeGoBtn.disabled = !(origin && dest);
+    }
+
+    function clearRoute() {
+      origin = null;
+      dest = null;
+      deactivateRoutingPicking();
+      routeMarkersLayer.clearLayers();
+      routeLineLayer.clearLayers();
+      updateRouteButtons();
+      setRoutingInfo('Elige origen y destino en el mapa.');
+    }
+
+    function drawRoute(route) {
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(
+        route.geometry.coordinates.map(function (c) { return [c[1], c[0]]; }),
+        { color: '#2196f3', weight: 6, opacity: 0.75 }
+      ));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var dist = route.distance >= 1000
+        ? (route.distance / 1000).toFixed(1) + ' km'
+        : Math.round(route.distance) + ' m';
+      var mins = Math.round(route.duration / 60);
+      var dur = mins < 1 ? '<1 min' : mins + ' min';
+      setRoutingInfo('Distancia: ' + dist + ' · Tiempo: ' + dur);
+    }
+
+    function traceRoute() {
+      if (!origin || !dest) return;
+      var servers = [
+        'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
+        'https://router.project-osrm.org/route/v1/driving/'
+      ];
+      var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
+      routeGoBtn.disabled = true;
+      setRoutingInfo('Calculando ruta...');
+      function attempt(i) {
+        if (i >= servers.length) {
+          routeGoBtn.disabled = !(origin && dest);
+          setRoutingInfo('No se pudo calcular la ruta. Revisa la conexión a internet.');
+          return;
+        }
+        fetch(servers[i] + coords + '?overview=full&geometries=geojson')
+          .then(function (res) {
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            return res.json();
+          })
+          .then(function (data) {
+            if (data.code !== 'Ok' || !data.routes || !data.routes.length) {
+              throw new Error('sin ruta');
+            }
+            drawRoute(data.routes[0]);
+            routeGoBtn.disabled = !(origin && dest);
+          })
+          .catch(function () { attempt(i + 1); });
+      }
+      attempt(0);
+    }
+
+    routeOriginBtn.addEventListener('click', function () {
+      if (pickingMode === 'origin') {
+        deactivateRoutingPicking();
+        setRoutingInfo('Selección de origen cancelada.');
+        return;
+      }
+      deactivateRoutingPicking();
+      pickingMode = 'origin';
+      routeOriginBtn.classList.add('active');
+      map.getContainer().style.cursor = 'crosshair';
+      setRoutingInfo('Haz clic en el mapa para marcar el origen.');
+    });
+
+    routeDestBtn.addEventListener('click', function () {
+      if (pickingMode === 'dest') {
+        deactivateRoutingPicking();
+        setRoutingInfo('Selección de destino cancelada.');
+        return;
+      }
+      deactivateRoutingPicking();
+      pickingMode = 'dest';
+      routeDestBtn.classList.add('active');
+      map.getContainer().style.cursor = 'crosshair';
+      setRoutingInfo('Haz clic en el mapa para marcar el destino.');
+    });
+
+    document.getElementById('routeOriginClear').addEventListener('click', function () {
+      origin = null;
+      deactivateRoutingPicking();
+      renderRouteMarkers();
+      updateRouteButtons();
+      setRoutingInfo('Origen quitado.');
+    });
+
+    document.getElementById('routeDestClear').addEventListener('click', function () {
+      dest = null;
+      deactivateRoutingPicking();
+      renderRouteMarkers();
+      updateRouteButtons();
+      setRoutingInfo('Destino quitado.');
+    });
+
+    document.getElementById('routeClearBtn').addEventListener('click', clearRoute);
+    routeGoBtn.addEventListener('click', traceRoute);
+
+    renderRouteMarkers();
+    updateRouteButtons();
+
+    var routingPanel = document.getElementById('routingPanel');
+    var routingToggle = document.getElementById('routingToggle');
+
+    function collapseRoutingPanel() {
+      routingPanel.classList.add('collapsed');
+      routingToggle.textContent = '+';
+    }
+
+    function expandRoutingPanel() {
+      routingPanel.classList.remove('collapsed');
+      routingToggle.textContent = '−';
+    }
+
+    document.getElementById('routingHeader').addEventListener('click', function () {
+      if (routingPanel.classList.contains('collapsed')) expandRoutingPanel();
+      else collapseRoutingPanel();
+    });
+
+    routingToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (routingPanel.classList.contains('collapsed')) expandRoutingPanel();
+      else collapseRoutingPanel();
     });
 
     renderPins();
