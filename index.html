@@ -117,12 +117,6 @@
       margin-bottom: 4px;
     }
     .routing-row > span { flex: none; width: 56px; }
-    .routing-row select {
-      flex: 1;
-      font-size: 11px;
-      min-width: 0;
-      padding: 2px;
-    }
     .routing-btn {
       flex: 1;
       padding: 3px 4px;
@@ -273,14 +267,6 @@
         <button id="routingToggle" type="button" class="dp-toggle">−</button>
       </div>
       <div class="routing-body">
-        <div class="routing-row">
-          <span>Desde pin</span>
-          <select id="routeOriginPin" title="Elegir origen desde una ubicación guardada"></select>
-        </div>
-        <div class="routing-row">
-          <span>Hasta pin</span>
-          <select id="routeDestPin" title="Elegir destino desde una ubicación guardada"></select>
-        </div>
         <div class="routing-row">
           <span>Origen</span>
           <button id="routeOriginBtn" type="button" class="routing-btn">Seleccionar</button>
@@ -678,7 +664,6 @@
         pinHint.textContent = 'Aún no hay ubicaciones guardadas.';
       }
       if (pinsCount) pinsCount.textContent = pins.length ? '(' + pins.length + ')' : '';
-      if (routeOriginPin && routeDestPin) populateRouteSelects();
     }
 
     pinAddBtn.addEventListener('click', function () {
@@ -707,20 +692,28 @@
 
     map.on('click', function (e) {
       if (pickingMode) {
+        var pin = pinAtClick(e);
         if (pickingMode === 'origin') {
-          origin = { lat: e.latlng.lat, lng: e.latlng.lng };
-          originPinId = null;
+          origin = {
+            lat: pin ? pin.lat : e.latlng.lat,
+            lng: pin ? pin.lng : e.latlng.lng
+          };
           deactivateRoutingPicking();
-          setRoutingInfo('Origen marcado. Ahora elige el destino.');
+          setRoutingInfo(pin
+            ? 'Origen: "' + pin.name + '". Ahora elige el destino.'
+            : 'Origen marcado. Ahora elige el destino.');
         } else {
-          dest = { lat: e.latlng.lat, lng: e.latlng.lng };
-          destPinId = null;
+          dest = {
+            lat: pin ? pin.lat : e.latlng.lat,
+            lng: pin ? pin.lng : e.latlng.lng
+          };
           deactivateRoutingPicking();
-          setRoutingInfo('Destino marcado. Pulsa "Trazar ruta".');
+          setRoutingInfo(pin
+            ? 'Destino: "' + pin.name + '". Pulsa "Trazar ruta".'
+            : 'Destino marcado. Pulsa "Trazar ruta".');
         }
         renderRouteMarkers();
         updateRouteButtons();
-        syncRouteSelects();
         return;
       }
       if (!pinMode) return;
@@ -816,8 +809,6 @@
     /* ===== Rutas ===== */
     var origin = null;
     var dest = null;
-    var originPinId = null;
-    var destPinId = null;
     var pickingMode = null;
     var routeMarkersLayer = L.layerGroup().addTo(map);
     var routeLineLayer = L.layerGroup().addTo(map);
@@ -825,8 +816,6 @@
     var routeOriginBtn = document.getElementById('routeOriginBtn');
     var routeDestBtn = document.getElementById('routeDestBtn');
     var routeGoBtn = document.getElementById('routeGoBtn');
-    var routeOriginPin = document.getElementById('routeOriginPin');
-    var routeDestPin = document.getElementById('routeDestPin');
 
     function setRoutingInfo(msg) {
       if (routeInfoEl) routeInfoEl.textContent = msg;
@@ -839,49 +828,15 @@
       map.getContainer().style.cursor = '';
     }
 
-    function populateRouteSelects() {
-      var opts = ['<option value="">— Usar clic en el mapa —</option>'];
-      pins.forEach(function (p) {
-        opts.push('<option value="' + escapeHtml(String(p.id)) + '">' + escapeHtml(p.name) + '</option>');
-      });
-      routeOriginPin.innerHTML = opts.join('');
-      routeDestPin.innerHTML = opts.join('');
-      syncRouteSelects();
-    }
-
-    function syncRouteSelects() {
-      if (originPinId && !findPin(originPinId)) { origin = null; originPinId = null; }
-      if (destPinId && !findPin(destPinId)) { dest = null; destPinId = null; }
-      routeOriginPin.value = originPinId ? String(originPinId) : '';
-      routeDestPin.value = destPinId ? String(destPinId) : '';
-      renderRouteMarkers();
-      updateRouteButtons();
-    }
-
-    function setRouteEndpointFromPin(side, pinId) {
-      var pin = findPin(pinId);
-      if (side === 'origin') {
-        origin = pin ? { lat: pin.lat, lng: pin.lng } : null;
-        originPinId = pin ? String(pin.id) : null;
-      } else {
-        dest = pin ? { lat: pin.lat, lng: pin.lng } : null;
-        destPinId = pin ? String(pin.id) : null;
+    function pinAtClick(e) {
+      var clickPt = map.latLngToContainerPoint(e.latlng);
+      var threshold = 25;
+      for (var i = 0; i < pins.length; i += 1) {
+        var pinPt = map.latLngToContainerPoint([pins[i].lat, pins[i].lng]);
+        if (clickPt.distanceTo(pinPt) <= threshold) return pins[i];
       }
-      deactivateRoutingPicking();
-      renderRouteMarkers();
-      updateRouteButtons();
-      setRoutingInfo(pin
-        ? (side === 'origin' ? 'Origen: ' : 'Destino: ') + pin.name
-        : (side === 'origin' ? 'Origen quitado.' : 'Destino quitado.'));
+      return null;
     }
-
-    routeOriginPin.addEventListener('change', function () {
-      setRouteEndpointFromPin('origin', routeOriginPin.value);
-    });
-
-    routeDestPin.addEventListener('change', function () {
-      setRouteEndpointFromPin('dest', routeDestPin.value);
-    });
 
     function makeRouteMarker(p, color, label) {
       return L.circleMarker([p.lat, p.lng], {
@@ -907,12 +862,9 @@
     function clearRoute() {
       origin = null;
       dest = null;
-      originPinId = null;
-      destPinId = null;
       deactivateRoutingPicking();
       routeMarkersLayer.clearLayers();
       routeLineLayer.clearLayers();
-      syncRouteSelects();
       updateRouteButtons();
       setRoutingInfo('Elige origen y destino en el mapa.');
     }
@@ -993,19 +945,17 @@
 
     document.getElementById('routeOriginClear').addEventListener('click', function () {
       origin = null;
-      originPinId = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
-      syncRouteSelects();
+      updateRouteButtons();
       setRoutingInfo('Origen quitado.');
     });
 
     document.getElementById('routeDestClear').addEventListener('click', function () {
       dest = null;
-      destPinId = null;
       deactivateRoutingPicking();
       renderRouteMarkers();
-      syncRouteSelects();
+      updateRouteButtons();
       setRoutingInfo('Destino quitado.');
     });
 
@@ -1014,7 +964,6 @@
 
     renderRouteMarkers();
     updateRouteButtons();
-    populateRouteSelects();
 
     var routingPanel = document.getElementById('routingPanel');
     var routingToggle = document.getElementById('routingToggle');
