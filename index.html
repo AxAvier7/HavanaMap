@@ -637,6 +637,16 @@
           '<strong>' + escapeHtml(p.name) + '</strong><br>' +
           '<span style="color:#999">' + p.lat.toFixed(5) + ', ' + p.lng.toFixed(5) + '</span>'
         );
+        marker.on('add', function () {
+          var el = marker.getElement();
+          if (!el) return;
+          el.addEventListener('click', function (ev) {
+            if (!pickingMode) return;
+            ev.stopPropagation();
+            ev.preventDefault();
+            selectPickedPin(p);
+          }, true);
+        });
 
         var li = document.createElement('li');
         li.appendChild(makePinsDot(p.color));
@@ -826,6 +836,22 @@
       routeOriginBtn.classList.remove('active');
       routeDestBtn.classList.remove('active');
       map.getContainer().style.cursor = '';
+    }
+
+    function selectPickedPin(p) {
+      if (pickingMode === 'origin') {
+        origin = { lat: p.lat, lng: p.lng };
+        deactivateRoutingPicking();
+        setRoutingInfo('Origen: "' + p.name + '". Ahora elige el destino.');
+      } else if (pickingMode === 'dest') {
+        dest = { lat: p.lat, lng: p.lng };
+        deactivateRoutingPicking();
+        setRoutingInfo('Destino: "' + p.name + '". Pulsa "Trazar ruta".');
+      } else {
+        return;
+      }
+      renderRouteMarkers();
+      updateRouteButtons();
     }
 
     function pinAtClick(e) {
