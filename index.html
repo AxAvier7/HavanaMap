@@ -1000,10 +1000,11 @@
       });
     }
 
-    function nearestLocalNode(g, p) {
+    function nearestLocalNode(g, p, adj) {
       var lats = g.nodes.lat, lons = g.nodes.lon;
       var best = -1, bd = Infinity;
       for (var i = 0; i < lats.length; i++) {
+        if (adj && adj[i] && !adj[i].length) continue;
         var d = (lats[i] - p.lat) * (lats[i] - p.lat) + (lons[i] - p.lng) * (lons[i] - p.lng);
         if (d < bd) { bd = d; best = i; }
       }
@@ -1065,9 +1066,7 @@
       return { distM: dist[t], path: path };
     }
 
-    function computeLocalRoute(a, b, profile) {
-      var g = LOCAL_GRAPH;
-      if (!g) return null;
+    function localRouteOn(g, a, b, profile) {
       var adj = LOCAL_ADJ[profile];
       if (!adj) {
         var edges = g.edges[profile];
@@ -1076,11 +1075,12 @@
         for (var e = 0; e < edges.length; e++) {
           var ed = edges[e];
           adj[ed[0]].push([ed[1], ed[2]]);
+          if (profile === 'car') adj[ed[1]].push([ed[0], ed[2]]);
         }
         LOCAL_ADJ[profile] = adj;
       }
-      var s = nearestLocalNode(g, a);
-      var t = nearestLocalNode(g, b);
+      var s = nearestLocalNode(g, a, adj);
+      var t = nearestLocalNode(g, b, adj);
       if (s === -1 || t === -1 || s === t) return null;
       var snapA = haversineKm(a, { lat: g.nodes.lat[s], lng: g.nodes.lon[s] }) * 1000;
       var snapB = haversineKm(b, { lat: g.nodes.lat[t], lng: g.nodes.lon[t] }) * 1000;
@@ -1090,6 +1090,18 @@
       var lats = g.nodes.lat, lons = g.nodes.lon;
       var coords = res.path.map(function (idx) { return [lats[idx], lons[idx]]; });
       return { distance: res.distM, coords: coords };
+    }
+
+    function computeLocalRoute(a, b, profile) {
+      var g = LOCAL_GRAPH;
+      if (!g) return null;
+      var res = localRouteOn(g, a, b, profile);
+      if (res) return res;
+      if (profile === 'car') {
+        var alt = localRouteOn(g, a, b, 'foot');
+        if (alt) { alt.fallbackProfile = 'foot'; return alt; }
+      }
+      return null;
     }
 
     function drawLocalRoute(reason) {
@@ -1102,8 +1114,9 @@
       routeLineLayer.addLayer(L.polyline(r.coords, { color: '#2196f3', weight: 6, opacity: 0.75 }));
       renderRouteMarkers();
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var via = r.fallbackProfile ? ' (callejones/vías no aptas: se usó la red ampliada)' : '';
       setRoutingInfo((reason ? reason + ' ' : '') + 'Ruta por calles (cálculo local sin conexión a servicios). Distancia: ' +
-        formatDistance(r.distance) + '.');
+        formatDistance(r.distance) + '.' + via);
     }
 
     function traceRoute() {
