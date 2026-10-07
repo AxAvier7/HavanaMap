@@ -824,7 +824,7 @@
     var destPin = null;
     var pickingMode = null;
     var routeMarkersLayer = L.layerGroup().addTo(map);
-    var routeLineLayer = L.layerGroup().addTo(map);
+    var routeLineLayer = L.featureGroup().addTo(map);
     var routeInfoEl = document.getElementById('routeInfo');
     var routeOriginBtn = document.getElementById('routeOriginBtn');
     var routeDestBtn = document.getElementById('routeDestBtn');
@@ -985,15 +985,143 @@
         'Sin conexión al servicio de rutas. Distancia en línea recta: ' + dist + '.');
     }
 
+    // ===== Motor de rutas local (grafo de calles OSM + Dijkstra, sin conexión) =====
+    var LOCAL_GRAPH = null;
+    var LOCAL_ADJ = { car: null, foot: null };
+
+    function loadLocalGraph() {
+      if (LOCAL_GRAPH) return Promise.resolve(LOCAL_GRAPH);
+      return fetch('data/havana-graph.json').then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then(function (g) {
+        LOCAL_GRAPH = g;
+        return g;
+      });
+    }
+
+    function nearestLocalNode(g, p) {
+      var lats = g.nodes.lat, lons = g.nodes.lon;
+      var best = -1, bd = Infinity;
+      for (var i = 0; i < lats.length; i++) {
+        var d = (lats[i] - p.lat) * (lats[i] - p.lat) + (lons[i] - p.lng) * (lons[i] - p.lng);
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    }
+
+    function dijkstraLocal(adj, s, t) {
+      var N = adj.length;
+      var dist = new Float64Array(N);
+      var prev = new Int32Array(N);
+      var done = new Uint8Array(N);
+      var heap = [[0, s]];
+      for (var i = 0; i < N; i++) dist[i] = Infinity;
+      for (var i = 0; i < N; i++) prev[i] = -1;
+      dist[s] = 0;
+      function push(item) {
+        var h = heap.length;
+        heap.push(item);
+        while (h > 0) {
+          var p = (h - 1) >> 1;
+          if (heap[p][0] <= heap[h][0]) break;
+          var tmp = heap[p]; heap[p] = heap[h]; heap[h] = tmp;
+          h = p;
+        }
+      }
+      function pop() {
+        var top = heap[0];
+        var last = heap.pop();
+        if (heap.length) {
+          heap[0] = last;
+          var h = 0;
+          for (;;) {
+            var l = h * 2 + 1, r = l + 1, m = h;
+            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+            if (m === h) break;
+            var tmp = heap[m]; heap[m] = heap[h]; heap[h] = tmp;
+            h = m;
+          }
+        }
+        return top;
+      }
+      while (heap.length) {
+        var cur = pop();
+        var u = cur[1];
+        if (done[u]) continue;
+        done[u] = 1;
+        if (u === t) break;
+        var al = adj[u];
+        for (var k = 0; k < al.length; k++) {
+          var v = al[k][0], w = al[k][1], nd = dist[u] + w;
+          if (nd < dist[v]) { dist[v] = nd; prev[v] = u; push([nd, v]); }
+        }
+      }
+      if (dist[t] === Infinity) return null;
+      var path = [];
+      for (var x = t; x !== -1; x = prev[x]) path.push(x);
+      path.reverse();
+      return { distM: dist[t], path: path };
+    }
+
+    function computeLocalRoute(a, b, profile) {
+      var g = LOCAL_GRAPH;
+      if (!g) return null;
+      var adj = LOCAL_ADJ[profile];
+      if (!adj) {
+        var edges = g.edges[profile];
+        adj = new Array(g.nodes.lat.length);
+        for (var i = 0; i < adj.length; i++) adj[i] = [];
+        for (var e = 0; e < edges.length; e++) {
+          var ed = edges[e];
+          adj[ed[0]].push([ed[1], ed[2]]);
+        }
+        LOCAL_ADJ[profile] = adj;
+      }
+      var s = nearestLocalNode(g, a);
+      var t = nearestLocalNode(g, b);
+      if (s === -1 || t === -1 || s === t) return null;
+      var snapA = haversineKm(a, { lat: g.nodes.lat[s], lng: g.nodes.lon[s] }) * 1000;
+      var snapB = haversineKm(b, { lat: g.nodes.lat[t], lng: g.nodes.lon[t] }) * 1000;
+      if (snapA > 3000 || snapB > 3000) return null;
+      var res = dijkstraLocal(adj, s, t);
+      if (!res) return null;
+      var lats = g.nodes.lat, lons = g.nodes.lon;
+      var coords = res.path.map(function (idx) { return [lats[idx], lons[idx]]; });
+      return { distance: res.distM, coords: coords };
+    }
+
+    function drawLocalRoute(reason) {
+      var r = computeLocalRoute(origin, dest, routeMode);
+      if (!r) {
+        drawOfflineFallback(reason || '');
+        return;
+      }
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(r.coords, { color: '#2196f3', weight: 6, opacity: 0.75 }));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      setRoutingInfo((reason ? reason + ' ' : '') + 'Ruta por calles (cálculo local sin conexión a servicios). Distancia: ' +
+        formatDistance(r.distance) + '.');
+    }
+
     function traceRoute() {
       if (!origin || !dest) return;
       routeGoBtn.disabled = true;
       if (navigator.onLine === false) {
-        routeGoBtn.disabled = !(origin && dest);
-        drawOfflineFallback('Estás sin conexión.');
+        setRoutingInfo('Sin conexión: calculando ruta en el grafo local...');
+        loadLocalGraph().then(function () {
+          drawLocalRoute('Estás sin conexión.');
+        }).catch(function () {
+          drawOfflineFallback('Estás sin conexión.');
+        }).then(function () {
+          routeGoBtn.disabled = !(origin && dest);
+        });
         return;
       }
       setRoutingInfo('Calculando ruta...');
+      loadLocalGraph(); // prefetch: grafo listo por si fallan los servicios
       var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
       var costings = { car: 'auto', foot: 'pedestrian' };
       var osrmServers = routeMode === 'car'
@@ -1049,11 +1177,20 @@
         settled = true;
         okFn();
       }
-      setTimeout(function () {
-        finish(function () {
+      function fallbackLocal(reason) {
+        if (settled) return;
+        settled = true;
+        setRoutingInfo('Servicios de ruta no disponibles. Calculando en el grafo local...');
+        loadLocalGraph().then(function () {
+          drawLocalRoute(reason);
+        }).catch(function () {
+          drawOfflineFallback(reason);
+        }).then(function () {
           routeGoBtn.disabled = !(origin && dest);
-          drawOfflineFallback('No respondió ningún servicio de rutas.');
         });
+      }
+      setTimeout(function () {
+        fallbackLocal('No respondió ningún servicio de rutas.');
       }, 25000);
       requests.forEach(function (req) {
         fetchWithTimeout(req.url, 12000).then(function (res) {
@@ -1071,10 +1208,7 @@
         }).catch(function () {
           pending--;
           if (pending === 0 && !settled) {
-            finish(function () {
-              routeGoBtn.disabled = !(origin && dest);
-              drawOfflineFallback('No respondió ningún servicio de rutas.');
-            });
+            fallbackLocal('No respondió ningún servicio de rutas.');
           }
         });
       });
