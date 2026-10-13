@@ -932,7 +932,8 @@
         resetPinForm();
         renderPins();
     try { updateTspPanel(); } catch(e){}
-        return;
+    renderPins();
+    try { updateTspPanel(); } catch(e){}        return;
       }
       pinMode = !pinMode;
       pinAddBtn.classList.toggle('active', pinMode);
@@ -971,5 +972,6 @@
         }
         renderRouteMarkers();
             updateRouteButtons();
-    try { updateTspPanel(); } catch(e){}><script></script>
+    try { updateTspPanel(); } catch(e){}>
+
 
