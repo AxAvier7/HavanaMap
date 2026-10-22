@@ -107,6 +107,8 @@
       font-family: sans-serif;
       font-size: 12px;
       max-width: 220px;
+      max-height: 74vh;
+      overflow-y: auto;
     }
     .routing-panel.collapsed { padding: 4px 8px; }
     .routing-panel.collapsed .routing-body { display: none; }
@@ -176,6 +178,24 @@
       font-size: 11px;
       font-weight: bold;
       margin-bottom: 4px;
+    }
+    #routeLegend {
+      margin-top: 4px;
+      font-size: 10px;
+      color: #ddd;
+    }
+    #routeLegend .legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      margin-right: 6px;
+    }
+    #routeLegend i {
+      display: inline-block;
+      width: 14px;
+      height: 0;
+      border-top-width: 3px;
+      border-top-style: solid;
     }
     #pinList li {
       display: flex;
@@ -321,6 +341,7 @@
         <button id="routeGoBtn" type="button" class="routing-primary">Trazar ruta</button>
         <button id="routeClearBtn" type="button" style="margin-top:4px">Limpiar ruta</button>
         <small class="hint" id="routeInfo">Elige origen y destino en el mapa.</small>
+        <div id="routeLegend" hidden></div>
         <div class="routing-sep"></div>
         <div class="tsp-title">Ruta por todos los pines <span id="tspPinsCount"></span></div>
         <div id="tspPinsList"></div>
@@ -958,6 +979,7 @@
       deactivateRoutingPicking();
       routeMarkersLayer.clearLayers();
       routeLineLayer.clearLayers();
+      clearPassLegend();
       updateRouteButtons();
       setRoutingInfo('Elige origen y destino en el mapa.');
     }
@@ -973,12 +995,145 @@
         : Math.round(meters) + ' m';
     }
 
-    function drawRoute(route) {
+    /* ===== Dibujo de la ruta: tramos repetidos en carriles paralelos ===== */
+    var PASS_COLORS = ['#e91e63', '#8e24aa', '#00897b', '#6d4c41', '#c0ca33'];
+
+    function dedupeCoords(coords) {
+      var out = [];
+      for (var i = 0; i < coords.length; i++) {
+        var p = coords[i];
+        if (!out.length) { out.push([p[0], p[1]]); continue; }
+        var q = out[out.length - 1];
+        if (Math.abs(q[0] - p[0]) > 1e-7 || Math.abs(q[1] - p[1]) > 1e-7) out.push([p[0], p[1]]);
+      }
+      return out;
+    }
+
+    function segKey(a, b) {
+      var ka = Math.round(a[0] * 1e6) + ',' + Math.round(a[1] * 1e6);
+      var kb = Math.round(b[0] * 1e6) + ',' + Math.round(b[1] * 1e6);
+      return ka < kb ? ka + '|' + kb : kb + '|' + ka;
+    }
+
+    function segOffset(a, b, meters) {
+      var cosLat = Math.cos(((a[0] + b[0]) / 2) * Math.PI / 180);
+      var ka = Math.round(a[0] * 1e6) + ',' + Math.round(a[1] * 1e6);
+      var kb = Math.round(b[0] * 1e6) + ',' + Math.round(b[1] * 1e6);
+      var sign = ka < kb ? 1 : -1;
+      var dLatM = (b[0] - a[0]) * 110540;
+      var dLngM = (b[1] - a[1]) * 111320 * cosLat;
+      var len = Math.sqrt(dLatM * dLatM + dLngM * dLngM);
+      if (!len) return { lat: 0, lng: 0 };
+      var nx = -dLatM / len * sign;
+      var ny = dLngM / len * sign;
+      return {
+        lat: ny * meters / 110540,
+        lng: nx * meters / (111320 * cosLat)
+      };
+    }
+
+    function buildRouteLanes(coords, stepM) {
+      var n = coords.length;
+      if (n < 2) return [];
+      var i, k;
+      var keys = [];
+      var counts = {};
+      for (i = 0; i < n - 1; i++) {
+        k = segKey(coords[i], coords[i + 1]);
+        keys.push(k);
+        counts[k] = (counts[k] || 0) + 1;
+      }
+      var seen = {};
+      var lanes = [], totals = [], offs = [];
+      for (i = 0; i < n - 1; i++) {
+        var lane = seen[keys[i]] || 0;
+        seen[keys[i]] = lane + 1;
+        lanes.push(lane);
+        totals.push(counts[keys[i]]);
+        offs.push(lane === 0
+          ? { lat: 0, lng: 0 }
+          : segOffset(coords[i], coords[i + 1], Math.min(lane, PASS_COLORS.length) * stepM));
+      }
+      var runs = [];
+      i = 0;
+      while (i < n - 1) {
+        var j = i;
+        while (j + 1 < n - 1 && lanes[j + 1] === lanes[i] && totals[j + 1] === totals[i]) j += 1;
+        var run = { lane: lanes[i], total: totals[i], pts: [] };
+        if (lanes[i] > 0) run.pts.push([coords[i][0], coords[i][1]]);
+        for (var s = i; s <= j; s++) {
+          var oa = offs[s];
+          if (s > i) {
+            oa = {
+              lat: (offs[s].lat + offs[s - 1].lat) / 2,
+              lng: (offs[s].lng + offs[s - 1].lng) / 2
+            };
+          }
+          run.pts.push([coords[s][0] + oa.lat, coords[s][1] + oa.lng]);
+        }
+        run.pts.push([coords[j + 1][0] + offs[j].lat, coords[j + 1][1] + offs[j].lng]);
+        if (lanes[i] > 0) run.pts.push([coords[j + 1][0], coords[j + 1][1]]);
+        runs.push(run);
+        i = j + 1;
+      }
+      return runs;
+    }
+
+    function passStyle(baseColor, lane) {
+      if (lane === 0) return { color: baseColor, weight: 6, opacity: 0.8 };
+      return {
+        color: PASS_COLORS[(lane - 1) % PASS_COLORS.length],
+        weight: 5,
+        opacity: 0.95,
+        dashArray: '12 7'
+      };
+    }
+
+    function updatePassLegend(runs) {
+      var el = document.getElementById('routeLegend');
+      if (!el) return;
+      var lanes = {};
+      for (var i = 0; i < runs.length; i++) {
+        if (runs[i].lane > 0) lanes[runs[i].lane] = true;
+      }
+      var keys = Object.keys(lanes).map(Number).sort(function (a, b) { return a - b; });
+      if (!keys.length) {
+        el.hidden = true;
+        el.innerHTML = '';
+        return;
+      }
+      var html = '<span>Tramos repetidos: </span>';
+      keys.forEach(function (ln) {
+        html += '<span class="legend-item"><i style="border-top-color:' +
+          PASS_COLORS[(ln - 1) % PASS_COLORS.length] + ';border-top-style:dashed"></i>' +
+          (ln + 1) + 'ª pasada</span>';
+      });
+      el.hidden = false;
+      el.innerHTML = html;
+    }
+
+    function clearPassLegend() {
+      var el = document.getElementById('routeLegend');
+      if (!el) return;
+      el.hidden = true;
+      el.innerHTML = '';
+    }
+
+    function renderRoutePolyline(coords, baseColor) {
       routeLineLayer.clearLayers();
-      routeLineLayer.addLayer(L.polyline(
-        route.geometry.coordinates.map(function (c) { return [c[1], c[0]]; }),
-        { color: '#2196f3', weight: 6, opacity: 0.75 }
-      ));
+      var clean = dedupeCoords(coords);
+      var step = routeMode === 'car' ? 18 : 11;
+      var runs = buildRouteLanes(clean, step);
+      runs.forEach(function (r) {
+        var st = passStyle(baseColor, r.lane);
+        routeLineLayer.addLayer(L.polyline(r.pts, st));
+      });
+      updatePassLegend(runs);
+      return runs;
+    }
+
+    function drawRoute(route) {
+      renderRoutePolyline(route.geometry.coordinates.map(function (c) { return [c[1], c[0]]; }), '#2196f3');
       renderRouteMarkers();
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
       setRoutingInfo('Ruta (' + routeModeLabel + ') de ' + pointLabel(originPin, origin) + ' a ' +
@@ -1031,6 +1186,7 @@
 
     function drawOfflineFallback(reason) {
       routeLineLayer.clearLayers();
+      clearPassLegend();
       routeLineLayer.addLayer(L.polyline(
         [[origin.lat, origin.lng], [dest.lat, dest.lng]],
         { color: '#757575', weight: 4, opacity: 0.8, dashArray: '6 8' }
@@ -1173,7 +1329,7 @@
         return;
       }
       routeLineLayer.clearLayers();
-      routeLineLayer.addLayer(L.polyline(r.coords, { color: '#2196f3', weight: 6, opacity: 0.75 }));
+      renderRoutePolyline(r.coords, '#2196f3');
       renderRouteMarkers();
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
       var via = r.fallbackProfile ? ' (callejones/vías no aptas: se usó la red ampliada)' : '';
@@ -1580,7 +1736,7 @@
       for (q = 0; q < mat.snap.length; q++) total += mat.snap[q];
 
       routeLineLayer.clearLayers();
-      routeLineLayer.addLayer(L.polyline(coords, { color: '#ff9800', weight: 6, opacity: 0.8 }));
+      renderRoutePolyline(coords, '#ff9800');
       map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
       var extra = usedProfile !== routeMode ? ' (red a pie: algunas vías no son aptas para coche)' : '';
       var approx = chosen.length > 12 ? ' Orden aproximado.' : '';
@@ -1635,6 +1791,7 @@
       tspGoBtn.addEventListener('click', tspRun);
       document.getElementById('tspClearBtn').addEventListener('click', function () {
         routeLineLayer.clearLayers();
+        clearPassLegend();
         setTspInfo('Ruta de pines borrada.');
       });
     }
