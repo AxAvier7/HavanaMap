@@ -1,223 +1,4 @@
-﻿    document.getElementById("tspClearBtn").addEventListener("click", function () {
-      tspSelected = new Set();
-      updateTspPanel();
-      setRoutingInfo("Ruta por pines limpiada.");
-    });
-    document.getElementById("tspGoBtn").addEventListener("click", function () {
-      tspSolve();
-    });
-    function tspSolve() {
-      var sel = Array.from(tspSelected);
-      if (sel.length < 2) {
-        setRoutingInfo("Selecciona al menos 2 pines para la ruta por pines.");
-        return;
-      }
-      loadLocalGraph().then(function () {
-        tspRun(sel);
-      }).catch(function () {
-        drawOfflineFallback("No se pudo cargar el grafo para ruta por pines.");
-      });
-    }
-    function tspSnapList(g, sel, profile) {
-      var adj = getAdj(g, profile);
-      var pts = [];
-      for (var i = 0; i < sel.length; i++) {
-        var p = findPin(sel[i]);
-        if (!p) return null;
-        var n = nearestLocalNode(g, { lat: p.lat, lng: p.lng }, adj);
-        if (n < 0) return null;
-        var sa = haversineKm({ lat: p.lat, lng: p.lng }, { lat: g.nodes.lat[n], lng: g.nodes.lon[n] }) * 1000;
-        if (sa > 3000) return null;
-        pts.push({ pin: p, node: n, lat: p.lat, lng: p.lng, adj: adj });
-      }
-      return pts;
-    }
-    function getAdj(g, profile) {
-      if (LOCAL_ADJ[profile]) return LOCAL_ADJ[profile];
-      var edges = g.edges[profile];
-      var adj = new Array(g.nodes.lat.length);
-      for (var i = 0; i < adj.length; i++) adj[i] = [];
-      for (var e = 0; e < edges.length; e++) {
-        var ed = edges[e];
-        adj[ed[0]].push([ed[1], ed[2]]);
-        if (profile === "car") adj[ed[1]].push([ed[0], ed[2]]);
-      }
-      LOCAL_ADJ[profile] = adj;
-      return adj;
-    }
-    function pathDistance(adj, s, t, g) {
-      if (s === t) return 0;
-      var res = dijkstraLocal(adj, s, t);
-      return res ? res.distM : Infinity;
-    }
-    function tspRun(sel) {
-      var g = LOCAL_GRAPH;
-      var prof = routeMode;
-      var pts = tspSnapList(g, sel, prof);
-      if (!pts) {
-        setRoutingInfo("Algún pin no es alcanzable con el grafo actual.");
-        return;
-      }
-      var n = pts.length;
-      var d = Array(n).fill().map(function () { return Array(n).fill(Infinity); });
-      for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) {
-        if (i === j) { d[i][j] = 0; continue; }
-        d[i][j] = pathDistance(pts[i].adj, pts[i].node, pts[j].node, g);
-      }
-      for (var i = 0; i < n; i++) for (var j = 0; j < n; j++) if (d[i][j] === Infinity) {
-        setRoutingInfo("No hay camino entre todos los pines seleccionados.");
-        return;
-      }
-      var typeEl = document.getElementById("tspType");
-      var startEl = document.getElementById("tspStart");
-      var endEl = document.getElementById("tspEnd");
-      var ttype = typeEl ? typeEl.value : "open";
-      var sId = startEl ? startEl.value : "auto";
-      var eId = endEl ? endEl.value : "auto";
-      var idxs = [];
-      for (var k = 0; k < sel.length; k++) idxs.push(k);
-      var startIdx = 0, endIdx = n - 1;
-      if (sId !== "auto") {
-        for (var k = 0; k < n; k++) if (pts[k].pin.id === sId) { startIdx = k; break; }
-      }
-      if (ttype === "closed") {
-        if (eId !== "auto" && eId !== sId) {
-          for (var k = 0; k < n; k++) if (pts[k].pin.id === eId) { endIdx = k; break; }
-        } else {
-          endIdx = startIdx;
-        }
-      } else {
-        if (eId !== "auto") {
-          for (var k = 0; k < n; k++) if (pts[k].pin.id === eId) { endIdx = k; break; }
-        } else if (sId !== "auto" && n > 1) {
-          endIdx = 1; if (endIdx === startIdx) endIdx = 0;
-        }
-      }
-      var perm = tspSolvePerm(n, d, ttype, startIdx, endIdx);
-      var total = 0;
-      for (var m = 0; m < perm.path.length - 1; m++) total += d[perm.path[m]][perm.path[m + 1]];
-      tspDraw(pts, perm.path, g, total);
-    }
-    function tspHeldKarp(n, d, startIdx, endIdx, closed) {
-      var dp = {};
-      var memo = {};
-      function dfs(mask, i, memoKey) {
-        var key = mask + "," + i;
-        if (memo[key] !== undefined) return memo[key];
-        if (mask === (1 << n) - 1) {
-          if (closed) return d[i][startIdx];
-          return d[i][endIdx];
-        }
-        var best = Infinity;
-        for (var j = 0; j < n; j++) {
-          if ((mask & (1 << j)) === 0) {
-            var val = dfs(mask | (1 << j), j, memo) + d[i][j];
-            if (val < best) best = val;
-          }
-        }
-        memo[key] = best;
-        return best;
-      }
-      function path(mask, i) {
-        if (mask === (1 << n) - 1) return closed ? [startIdx] : [endIdx];
-        for (var j = 0; j < n; j++) {
-          if ((mask & (1 << j)) === 0) {
-            var sub = dfs(mask | (1 << j), j, {}) + d[i][j];
-            if (Math.abs(sub - dfs(mask, i, {})) < 1e-9) {
-              return [j].concat(path(mask | (1 << j), j));
-            }
-          }
-        }
-        return [];
-      }
-      var ans = dfs(1 << startIdx, startIdx, {});
-      var p = [startIdx].concat(path(1 << startIdx, startIdx));
-      if (!closed && p[p.length - 1] !== endIdx) p[p.length - 1] = endIdx;
-      return { dist: ans, path: p };
-    }
-    function tspNN(n, d, startIdx, endIdx, closed) {
-      var used = new Array(n).fill(false);
-      var path = [startIdx];
-      used[startIdx] = true;
-      var cur = startIdx;
-      var total = 0;
-      for (var i = 1; i < n; i++) {
-        var best = -1, bestd = Infinity;
-        for (var j = 0; j < n; j++) {
-          if (!used[j] && d[cur][j] < bestd) { bestd = d[cur][j]; best = j; }
-        }
-        if (best < 0) return { dist: Infinity, path: path.slice() };
-        path.push(best);
-        used[best] = true;
-        total += bestd;
-        cur = best;
-      }
-      if (closed) total += d[cur][startIdx];
-      else total += d[cur][endIdx];
-      if (!closed && path[path.length - 1] !== endIdx) {
-        // simple swap last if needed? endIdx forced? not strictly
-      }
-      pathFinal = path.slice();
-      if (!closed) {
-        var last = pathFinal.pop();
-        pathFinal.push(endIdx);
-      }
-      var total2 = 0;
-      for (var m = 0; m < pathFinal.length - 1; m++) total2 += d[pathFinal[m]][pathFinal[m + 1]];
-      return { dist: total2, path: pathFinal };
-    }
-    function tspSolvePerm(n, d, ttype, startIdx, endIdx) {
-      var closed = ttype === "closed";
-      if (n <= 12) {
-        return tspHeldKarp(n, d, startIdx, endIdx, closed);
-      } else {
-        var r = tspNN(n, d, startIdx, endIdx, closed);
-        try { r.path = tsp2opt(r.path, d, closed); } catch (e) {}
-        var total2 = 0;
-        for (var m = 0; m < r.path.length - 1; m++) total2 += d[r.path[m]][r.path[m + 1]];
-        r.dist = total2;
-        return r;
-      }
-    }
-    function tsp2opt(path, d, closed) {
-      var p = path.slice();
-      var improved = true;
-      while (improved) {
-        improved = false;
-        for (var i = 0; i < p.length - 2; i++) {
-          for (var j = i + 2; j < p.length - 1; j++) {
-            var delta = d[p[i]][p[j]] + d[p[i + 1]][p[j + 1]] - (d[p[i]][p[i + 1]] + d[p[j]][p[j + 1]]);
-            if (delta < -1e-9) {
-              var rev = p.slice(i + 1, j + 1).reverse();
-              for (var k = 0; k < rev.length; k++) p[i + 1 + k] = rev[k];
-              improved = true;
-            }
-          }
-        }
-      }
-      return p;
-    }
-    function tspDraw(pts, order, g, total) {
-      routeLineLayer.clearLayers();
-      var all = [];
-      for (var i = 0; i < order.length - 1; i++) {
-        var a = pts[order[i]];
-        var b = pts[order[i + 1]];
-        var pr = pathDistanceRoute(pts[order[i]].adj, pts[order[i]].node, pts[order[i + 1]].node, g);
-        if (!pr || !pr.path || pr.path.length < 2) return;
-        for (var k = 1; k < pr.path.length; k++) all.push([g.nodes.lat[pr.path[k]], g.nodes.lon[pr.path[k]]]);
-      }
-      routeLineLayer.addLayer(L.polyline(all, { color: "#ff9800", weight: 6, opacity: 0.75 }));
-      renderRouteMarkers();
-      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
-      setRoutingInfo("Ruta por pines (" + routeModeLabel + "): " + total.toFixed(0) + " m, " + order.length + " paradas.");
-    }
-    function pathDistanceRoute(adj, s, t, g) {
-      var res = dijkstraLocal(adj, s, t);
-      if (!res) return null;
-      return res;
-    }
-  <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
@@ -360,6 +141,42 @@
       color: #ccc;
       min-height: 14px;
     }
+    .routing-row select {
+      flex: 1;
+      min-width: 0;
+      padding: 2px;
+      font-size: 11px;
+    }
+    #tspPinsList {
+      max-height: 96px;
+      overflow-y: auto;
+      margin-bottom: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.15);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    }
+    #tspPinsList label {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 0;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    #tspPinsList span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .routing-sep {
+      height: 1px;
+      background: rgba(255, 255, 255, 0.25);
+      margin: 8px 0 6px;
+    }
+    .tsp-title {
+      font-size: 11px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
     #pinList li {
       display: flex;
       align-items: center;
@@ -441,7 +258,7 @@
     <div class="download-panel" id="downloadPanel">
       <div class="dp-header" id="dpHeader" title="Minimizar / expandir">
         <span class="dp-title">Descargar mapa</span>
-        <button id="dpToggle" type="button" class="dp-toggle">âˆ’</button>
+        <button id="dpToggle" type="button" class="dp-toggle">−</button>
       </div>
       <div class="dp-body">
         <label for="zoomLevel">Hasta el zoom</label>
@@ -458,7 +275,7 @@
     <div class="pins-panel" id="pinsPanel">
       <div class="dp-header" id="pinsHeader" title="Minimizar / expandir">
         <span class="dp-title">Mis ubicaciones</span>
-        <button id="pinsToggle" type="button" class="dp-toggle">âˆ’</button>
+        <button id="pinsToggle" type="button" class="dp-toggle">−</button>
       </div>
       <div class="pins-body">
         <div class="pins-form">
@@ -470,12 +287,12 @@
             <option value="#e9c46a">Amarillo</option>
             <option value="#9b5de5">Morado</option>
           </select>
-          <button id="pinAddBtn" type="button">+ AÃ±adir pin en el mapa</button>
+          <button id="pinAddBtn" type="button">+ Añadir pin en el mapa</button>
           <small class="hint" id="pinHint"></small>
         </div>
         <div class="pins-list-header" id="pinsListHeader" title="Recoger / desplegar lista">
           <span class="pins-list-title">Lista de pines <span class="pins-count" id="pinsCount"></span></span>
-          <button id="pinsListToggle" type="button" class="dp-toggle">âˆ’</button>
+          <button id="pinsListToggle" type="button" class="dp-toggle">−</button>
         </div>
         <ul id="pinList"></ul>
       </div>
@@ -483,61 +300,56 @@
     <div class="routing-panel" id="routingPanel">
       <div class="dp-header" id="routingHeader" title="Minimizar / expandir">
         <span class="dp-title">Trazar ruta</span>
-        <button id="routingToggle" type="button" class="dp-toggle">âˆ’</button>
+        <button id="routingToggle" type="button" class="dp-toggle">−</button>
       </div>
       <div class="routing-body">
         <div class="routing-row">
           <span>Origen</span>
           <button id="routeOriginBtn" type="button" class="routing-btn">Seleccionar</button>
-          <button id="routeOriginClear" type="button" class="routing-btn" title="Quitar origen">âœ•</button>
+          <button id="routeOriginClear" type="button" class="routing-btn" title="Quitar origen">✕</button>
         </div>
         <div class="routing-row">
           <span>Destino</span>
           <button id="routeDestBtn" type="button" class="routing-btn">Seleccionar</button>
-          <button id="routeDestClear" type="button" class="routing-btn" title="Quitar destino">âœ•</button>
+          <button id="routeDestClear" type="button" class="routing-btn" title="Quitar destino">✕</button>
         </div>
         <div class="routing-row">
           <span>Modo</span>
-          <button id="routeModeCar" type="button" class="routing-btn active">VehÃ­culo</button>
+          <button id="routeModeCar" type="button" class="routing-btn active">Vehículo</button>
           <button id="routeModeFoot" type="button" class="routing-btn">A pie</button>
         </div>
         <button id="routeGoBtn" type="button" class="routing-primary">Trazar ruta</button>
         <button id="routeClearBtn" type="button" style="margin-top:4px">Limpiar ruta</button>
-        <div class="routing-row" style="margin-top:8px">
-          <span>Ruta por pines</span>
-          <small class="hint" id="tspPinsCount"></small>
-        </div>
-        <div id="tspPinsList" style="max-height:120px;overflow:auto;border:1px solid #444;border-radius:4px;padding:4px;margin-bottom:4px"></div>
+        <small class="hint" id="routeInfo">Elige origen y destino en el mapa.</small>
+        <div class="routing-sep"></div>
+        <div class="tsp-title">Ruta por todos los pines <span id="tspPinsCount"></span></div>
+        <div id="tspPinsList"></div>
         <div class="routing-row">
           <span>Tipo</span>
           <select id="tspType">
-            <option value="open">Abierta (sin volver)</option>
-            <option value="closed">Cerrada (vuelta al inicio)</option>
+            <option value="open">Abierta</option>
+            <option value="closed">Cerrada (circuito)</option>
           </select>
         </div>
         <div class="routing-row">
-          <span>Inicio TSP</span>
-          <select id="tspStart">
-            <option value="auto">AutomÃ¡tico</option>
-          </select>
+          <span>Inicio</span>
+          <select id="tspStart"><option value="auto">Automático</option></select>
         </div>
         <div class="routing-row">
-          <span>Fin TSP</span>
-          <select id="tspEnd">
-            <option value="auto">AutomÃ¡tico</option>
-          </select>
+          <span>Fin</span>
+          <select id="tspEnd"><option value="auto">Automático</option></select>
         </div>
-        <button id="tspGoBtn" type="button" class="routing-primary">Trazar ruta por pines</button>
-        <button id="tspClearBtn" type="button" style="margin-top:4px">Limpiar ruta por pines</button>
-        <small class="hint" id="routeInfo">Elige origen y destino en el mapa.</small>
+        <button id="tspGoBtn" type="button" class="routing-primary">Ruta por todos los pines</button>
+        <button id="tspClearBtn" type="button" style="margin-top:4px">Limpiar ruta de pines</button>
+        <small class="hint" id="tspInfo">Usa el modo Vehículo o A pie de arriba.</small>
       </div>
     </div>
   </div>
   <div id="offline-status" class="offline-status" hidden></div>
 
-  <script src="lib/leaflet/leaflet.js">
-  <script src="offline.js">
-  
+  <script src="lib/leaflet/leaflet.js"></script>
+  <script src="offline.js"></script>
+  <script>
     'use strict';
 
     var HAVANA_BOUNDS = L.latLngBounds([22.9337108, -82.6072626], [23.3857728, -82.0814213]);
@@ -602,9 +414,9 @@
     function refreshStatus() {
       HavanaTiles.getCacheInfo().then(function (info) {
         if (info.count > 0) {
-          setStatus('Mapa disponible sin conexiÃ³n: ' + info.count + ' tiles (' + formatBytes(info.bytes) + ')', 'ready');
+          setStatus('Mapa disponible sin conexión: ' + info.count + ' tiles (' + formatBytes(info.bytes) + ')', 'ready');
         } else {
-          setStatus('Mapa sin descargar: se descargarÃ¡ al cargar, requiere internet', 'empty');
+          setStatus('Mapa sin descargar: se descargará al cargar, requiere internet', 'empty');
         }
       }).catch(function () {
         setStatus('Almacenamiento no disponible', 'empty');
@@ -752,7 +564,7 @@
 
     function expandPanel() {
       downloadPanel.classList.remove('collapsed');
-      dpToggle.textContent = 'âˆ’';
+      dpToggle.textContent = '−';
     }
 
     function isFullyDownloaded() {
@@ -782,7 +594,7 @@
       downloadTargetZoom = v;
       try { localStorage.setItem('havanamap-maxzoom', String(v)); } catch (e) {}
       map.setMaxZoom(v);
-      zoomInfoEl.textContent = 'â‰ˆ ' + totalTilesFor(v).toLocaleString() + ' tiles';
+      zoomInfoEl.textContent = '≈ ' + totalTilesFor(v).toLocaleString() + ' tiles';
       expandPanel();
       downloadSession.active = false;
       downloadRunning = false;
@@ -791,21 +603,21 @@
 
     zoomSelect.addEventListener('change', applyZoomChoice);
     zoomSelect.value = String(downloadTargetZoom);
-    zoomInfoEl.textContent = 'â‰ˆ ' + totalTilesFor(downloadTargetZoom).toLocaleString() + ' tiles';
+    zoomInfoEl.textContent = '≈ ' + totalTilesFor(downloadTargetZoom).toLocaleString() + ' tiles';
 
     setTimeout(function () {
       map.invalidateSize();
       map.fitBounds(HAVANA_BOUNDS, { padding: [10, 10] });
     }, 100);
 
-    // Iniciar la descarga completa en cuanto se entra a la pÃ¡gina,
+    // Iniciar la descarga completa en cuanto se entra a la página,
     // sin depender del evento 'load' del mapa.
     setTimeout(ensureOffline, 500);
 
-    // Si el mapa ya estÃ¡ completo, minimizar el panel de descarga.
+    // Si el mapa ya está completo, minimizar el panel de descarga.
     isFullyDownloaded().then(function (full) { if (full) collapsePanel(); });
 
-    // Registrar el Service Worker para poder abrir la pÃ¡gina sin conexiÃ³n
+    // Registrar el Service Worker para poder abrir la página sin conexión
     // (si ya se ha visitado una vez con internet).
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function () {
@@ -860,7 +672,7 @@
       pinNameInput.value = '';
       pinColorInput.value = '#e63946';
       pinAddBtn.classList.remove('active');
-      pinAddBtn.textContent = '+ AÃ±adir pin en el mapa';
+      pinAddBtn.textContent = '+ Añadir pin en el mapa';
       map.getContainer().style.cursor = '';
       pinHint.textContent = '';
     }
@@ -902,7 +714,7 @@
         var buttons = [
           { cls: 'pin-go', text: 'Ir' },
           { cls: 'pin-edit', text: 'Editar' },
-          { cls: 'pin-del', text: 'âœ•' }
+          { cls: 'pin-del', text: '✕' }
         ];
         buttons.forEach(function (b) {
           var btn = document.createElement('button');
@@ -915,9 +727,10 @@
         pinListEl.appendChild(li);
       });
       if (pins.length === 0 && !pinHint.textContent) {
-        pinHint.textContent = 'AÃºn no hay ubicaciones guardadas.';
+        pinHint.textContent = 'Aún no hay ubicaciones guardadas.';
       }
       if (pinsCount) pinsCount.textContent = pins.length ? '(' + pins.length + ')' : '';
+      if (typeof updateTspPanel === 'function') updateTspPanel();
     }
 
     pinAddBtn.addEventListener('click', function () {
@@ -931,19 +744,17 @@
         }
         resetPinForm();
         renderPins();
-    try { updateTspPanel(); } catch(e){}
-    renderPins();
-    try { updateTspPanel(); } catch(e){}        return;
+        return;
       }
       pinMode = !pinMode;
       pinAddBtn.classList.toggle('active', pinMode);
       pinAddBtn.textContent = pinMode
         ? 'Haz clic en el mapa para colocar el pin'
-        : '+ AÃ±adir pin en el mapa';
+        : '+ Añadir pin en el mapa';
       map.getContainer().style.cursor = pinMode ? 'crosshair' : '';
       pinHint.textContent = pinMode
         ? 'Haz clic en cualquier punto del mapa.'
-        : (pins.length === 0 ? 'AÃºn no hay ubicaciones guardadas.' : '');
+        : (pins.length === 0 ? 'Aún no hay ubicaciones guardadas.' : '');
     });
 
     map.on('click', function (e) {
@@ -971,12 +782,957 @@
             : 'Destino marcado. Pulsa "Trazar ruta".');
         }
         renderRouteMarkers();
-            updateRouteButtons();
-    try { updateTspPanel(); } catch(e){}>
-  <script src="offline.js"></script>
-  <script>
-    'use strict';
+        updateRouteButtons();
+        return;
+      }
+      if (!pinMode) return;
+      var name = pinNameInput.value.trim() || ('Ubicación ' + (pins.length + 1));
+      pins.push({
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+        name: name,
+        lat: e.latlng.lat,
+        lng: e.latlng.lng,
+        color: pinColorInput.value
+      });
+      savePins();
+      renderPins();
+      pinMode = false;
+      pinAddBtn.classList.remove('active');
+      pinAddBtn.textContent = '+ Añadir pin en el mapa';
+      pinHint.textContent = 'Pin guardado en ' + e.latlng.lat.toFixed(5) + ', ' + e.latlng.lng.toFixed(5);
+    });
+
+    pinListEl.addEventListener('click', function (e) {
+      var btn = e.target.closest ? e.target.closest('button') : null;
+      if (!btn || !btn.dataset.id) return;
+      var pin = findPin(btn.dataset.id);
+      if (!pin) return;
+      if (btn.classList.contains('pin-go')) {
+        map.setView([pin.lat, pin.lng], 17);
+      } else if (btn.classList.contains('pin-edit')) {
+        editingPinId = pin.id;
+        pinNameInput.value = pin.name;
+        pinColorInput.value = pin.color;
+        pinAddBtn.classList.remove('active');
+        pinAddBtn.textContent = 'Guardar cambios';
+        pinHint.textContent = 'Editando: cambia nombre o color y pulsa "Guardar cambios".';
+        pinMode = false;
+        map.getContainer().style.cursor = '';
+      } else if (btn.classList.contains('pin-del')) {
+        pins = pins.filter(function (p) { return String(p.id) !== String(pin.id); });
+        savePins();
+        if (String(editingPinId) === String(pin.id)) resetPinForm();
+        renderPins();
+      }
+    });
+
+    var pinsPanel = document.getElementById('pinsPanel');
+    var pinsToggle = document.getElementById('pinsToggle');
+
+    function collapsePinsPanel() {
+      pinsPanel.classList.add('collapsed');
+      pinsToggle.textContent = '+';
+    }
+
+    function expandPinsPanel() {
+      pinsPanel.classList.remove('collapsed');
+      pinsToggle.textContent = '−';
+    }
+
+    document.getElementById('pinsHeader').addEventListener('click', function () {
+      if (pinsPanel.classList.contains('collapsed')) expandPinsPanel();
+      else collapsePinsPanel();
+    });
+
+    pinsToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pinsPanel.classList.contains('collapsed')) expandPinsPanel();
+      else collapsePinsPanel();
+    });
+
+    var pinsListHeader = document.getElementById('pinsListHeader');
+    var pinsListToggle = document.getElementById('pinsListToggle');
+    var pinsCount = document.getElementById('pinsCount');
+
+    function collapsePinList() {
+      pinListEl.classList.add('collapsed');
+      pinsListToggle.textContent = '+';
+    }
+
+    function expandPinList() {
+      pinListEl.classList.remove('collapsed');
+      pinsListToggle.textContent = '−';
+    }
+
+    pinsListHeader.addEventListener('click', function () {
+      if (pinListEl.classList.contains('collapsed')) expandPinList();
+      else collapsePinList();
+    });
+
+    pinsListToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (pinListEl.classList.contains('collapsed')) expandPinList();
+      else collapsePinList();
+    });
+
+    /* ===== Rutas ===== */
+    var origin = null;
+    var dest = null;
+    var originPin = null;
+    var destPin = null;
+    var pickingMode = null;
+    var routeMarkersLayer = L.layerGroup().addTo(map);
+    var routeLineLayer = L.featureGroup().addTo(map);
+    var routeInfoEl = document.getElementById('routeInfo');
+    var routeOriginBtn = document.getElementById('routeOriginBtn');
+    var routeDestBtn = document.getElementById('routeDestBtn');
+    var routeGoBtn = document.getElementById('routeGoBtn');
+    var routeMode = 'car';
+    var routeModeLabel = 'Vehículo';
+
+    function setRoutingInfo(msg) {
+      if (routeInfoEl) routeInfoEl.textContent = msg;
+    }
+
+    function deactivateRoutingPicking() {
+      pickingMode = null;
+      routeOriginBtn.classList.remove('active');
+      routeDestBtn.classList.remove('active');
+      map.getContainer().style.cursor = '';
+    }
+
+    function selectPickedPin(p) {
+      if (pickingMode === 'origin') {
+        origin = { lat: p.lat, lng: p.lng };
+        originPin = p;
+        deactivateRoutingPicking();
+        setRoutingInfo('Origen: "' + p.name + '". Ahora elige el destino.');
+      } else if (pickingMode === 'dest') {
+        dest = { lat: p.lat, lng: p.lng };
+        destPin = p;
+        deactivateRoutingPicking();
+        setRoutingInfo('Destino: "' + p.name + '". Pulsa "Trazar ruta".');
+      } else {
+        return;
+      }
+      renderRouteMarkers();
+      updateRouteButtons();
+    }
+
+    function pinAtClick(e) {
+      var clickPt = map.latLngToContainerPoint(e.latlng);
+      var threshold = 25;
+      for (var i = 0; i < pins.length; i += 1) {
+        var pinPt = map.latLngToContainerPoint([pins[i].lat, pins[i].lng]);
+        if (clickPt.distanceTo(pinPt) <= threshold) return pins[i];
+      }
+      return null;
+    }
+
+    function makeRouteMarker(p, color, label) {
+      return L.circleMarker([p.lat, p.lng], {
+        radius: 12,
+        color: '#fff',
+        weight: 2,
+        fillColor: color,
+        fillOpacity: 1
+      }).bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -10], opacity: 0.9 })
+        .addTo(routeMarkersLayer);
+    }
+
+    function renderRouteMarkers() {
+      routeMarkersLayer.clearLayers();
+      if (origin) makeRouteMarker(origin, '#4caf50', 'Origen');
+      if (dest) makeRouteMarker(dest, '#e63946', 'Destino');
+    }
+
+    function updateRouteButtons() {
+      routeGoBtn.disabled = !(origin && dest);
+    }
+
+    function clearRoute() {
+      origin = null;
+      dest = null;
+      originPin = null;
+      destPin = null;
+      deactivateRoutingPicking();
+      routeMarkersLayer.clearLayers();
+      routeLineLayer.clearLayers();
+      updateRouteButtons();
+      setRoutingInfo('Elige origen y destino en el mapa.');
+    }
+
+    function pointLabel(pin, pos) {
+      if (pin && pin.name) return '"' + pin.name + '"';
+      return pos.lat.toFixed(4) + ', ' + pos.lng.toFixed(4);
+    }
+
+    function formatDistance(meters) {
+      return meters >= 1000
+        ? (meters / 1000).toFixed(1) + ' km'
+        : Math.round(meters) + ' m';
+    }
+
+    function drawRoute(route) {
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(
+        route.geometry.coordinates.map(function (c) { return [c[1], c[0]]; }),
+        { color: '#2196f3', weight: 6, opacity: 0.75 }
+      ));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      setRoutingInfo('Ruta (' + routeModeLabel + ') de ' + pointLabel(originPin, origin) + ' a ' +
+        pointLabel(destPin, dest) + '. Distancia: ' + formatDistance(route.distance));
+    }
+
+    function decodePolyline6(str) {
+      var pts = [], index = 0, lat = 0, lng = 0;
+      while (index < str.length) {
+        var b, shift = 0, result = 0;
+        do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 32);
+        var dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lat += dlat;
+        shift = 0; result = 0;
+        do { b = str.charCodeAt(index++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 32);
+        var dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+        lng += dlng;
+        pts.push([lat / 1e6, lng / 1e6]);
+      }
+      return pts;
+    }
+
+    function extractOsrmRoute(json) {
+      if (json && json.code === 'Ok' && json.routes && json.routes.length) return json.routes[0];
+      return null;
+    }
+
+    function extractValhallaRoute(json) {
+      var leg = json && json.trip && json.trip.legs && json.trip.legs[0];
+      if (!leg || !leg.shape || !leg.summary) return null;
+      var coords = decodePolyline6(leg.shape);
+      if (!coords.length) return null;
+      return {
+        distance: leg.summary.length * 1000,
+        geometry: { type: 'LineString', coordinates: coords.map(function (p) { return [p[1], p[0]]; }) }
+      };
+    }
+
+    function haversineKm(a, b) {
+      var R = 6371;
+      var dLat = (b.lat - a.lat) * Math.PI / 180;
+      var dLng = (b.lng - a.lng) * Math.PI / 180;
+      var la1 = a.lat * Math.PI / 180;
+      var la2 = b.lat * Math.PI / 180;
+      var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(la1) * Math.cos(la2) *
+        Math.sin(dLng / 2) * Math.sin(dLng / 2);
+      return 2 * R * Math.asin(Math.sqrt(h));
+    }
+
+    function drawOfflineFallback(reason) {
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(
+        [[origin.lat, origin.lng], [dest.lat, dest.lng]],
+        { color: '#757575', weight: 4, opacity: 0.8, dashArray: '6 8' }
+      ));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var km = haversineKm(origin, dest);
+      var dist = km >= 1 ? km.toFixed(1) + ' km' : Math.round(km * 1000) + ' m';
+      setRoutingInfo((reason ? reason + ' ' : '') +
+        'Sin conexión al servicio de rutas. Distancia en línea recta: ' + dist + '.');
+    }
+
+    // ===== Motor de rutas local (grafo de calles OSM + Dijkstra, sin conexión) =====
+    var LOCAL_GRAPH = null;
+    var LOCAL_ADJ = { car: null, foot: null };
+
+    function loadLocalGraph() {
+      if (LOCAL_GRAPH) return Promise.resolve(LOCAL_GRAPH);
+      return fetch('data/havana-graph.json').then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then(function (g) {
+        LOCAL_GRAPH = g;
+        return g;
+      });
+    }
+
+    function nearestLocalNode(g, p, adj) {
+      var lats = g.nodes.lat, lons = g.nodes.lon;
+      var best = -1, bd = Infinity;
+      for (var i = 0; i < lats.length; i++) {
+        if (adj && adj[i] && !adj[i].length) continue;
+        var d = (lats[i] - p.lat) * (lats[i] - p.lat) + (lons[i] - p.lng) * (lons[i] - p.lng);
+        if (d < bd) { bd = d; best = i; }
+      }
+      return best;
+    }
+
+    function dijkstraLocal(adj, s, t) {
+      var N = adj.length;
+      var dist = new Float64Array(N);
+      var prev = new Int32Array(N);
+      var done = new Uint8Array(N);
+      var heap = [[0, s]];
+      for (var i = 0; i < N; i++) dist[i] = Infinity;
+      for (var i = 0; i < N; i++) prev[i] = -1;
+      dist[s] = 0;
+      function push(item) {
+        var h = heap.length;
+        heap.push(item);
+        while (h > 0) {
+          var p = (h - 1) >> 1;
+          if (heap[p][0] <= heap[h][0]) break;
+          var tmp = heap[p]; heap[p] = heap[h]; heap[h] = tmp;
+          h = p;
+        }
+      }
+      function pop() {
+        var top = heap[0];
+        var last = heap.pop();
+        if (heap.length) {
+          heap[0] = last;
+          var h = 0;
+          for (;;) {
+            var l = h * 2 + 1, r = l + 1, m = h;
+            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+            if (m === h) break;
+            var tmp = heap[m]; heap[m] = heap[h]; heap[h] = tmp;
+            h = m;
+          }
+        }
+        return top;
+      }
+      while (heap.length) {
+        var cur = pop();
+        var u = cur[1];
+        if (done[u]) continue;
+        done[u] = 1;
+        if (u === t) break;
+        var al = adj[u];
+        for (var k = 0; k < al.length; k++) {
+          var v = al[k][0], w = al[k][1], nd = dist[u] + w;
+          if (nd < dist[v]) { dist[v] = nd; prev[v] = u; push([nd, v]); }
+        }
+      }
+      if (dist[t] === Infinity) return null;
+      var path = [];
+      for (var x = t; x !== -1; x = prev[x]) path.push(x);
+      path.reverse();
+      return { distM: dist[t], path: path };
+    }
+
+    function getAdjLocal(g, profile) {
+      var adj = LOCAL_ADJ[profile];
+      if (adj) return adj;
+      var edges = g.edges[profile];
+      adj = new Array(g.nodes.lat.length);
+      for (var i = 0; i < adj.length; i++) adj[i] = [];
+      for (var e = 0; e < edges.length; e++) {
+        var ed = edges[e];
+        adj[ed[0]].push([ed[1], ed[2]]);
+        if (profile === 'car') adj[ed[1]].push([ed[0], ed[2]]);
+      }
+      LOCAL_ADJ[profile] = adj;
+      return adj;
+    }
+
+    function localRouteOn(g, a, b, profile) {
+      var adj = getAdjLocal(g, profile);
+      var s = nearestLocalNode(g, a, adj);
+      var t = nearestLocalNode(g, b, adj);
+      if (s === -1 || t === -1 || s === t) return null;
+      var snapA = haversineKm(a, { lat: g.nodes.lat[s], lng: g.nodes.lon[s] }) * 1000;
+      var snapB = haversineKm(b, { lat: g.nodes.lat[t], lng: g.nodes.lon[t] }) * 1000;
+      if (snapA > 3000 || snapB > 3000) return null;
+      var res = dijkstraLocal(adj, s, t);
+      if (!res) return null;
+      var lats = g.nodes.lat, lons = g.nodes.lon;
+      var coords = res.path.map(function (idx) { return [lats[idx], lons[idx]]; });
+      return { distance: res.distM, coords: coords };
+    }
+
+    function computeLocalRoute(a, b, profile) {
+      var g = LOCAL_GRAPH;
+      if (!g) return null;
+      var res = localRouteOn(g, a, b, profile);
+      if (res) return res;
+      if (profile === 'car') {
+        var alt = localRouteOn(g, a, b, 'foot');
+        if (alt) { alt.fallbackProfile = 'foot'; return alt; }
+      }
+      return null;
+    }
+
+    function drawLocalRoute(reason) {
+      var r = computeLocalRoute(origin, dest, routeMode);
+      if (!r) {
+        drawOfflineFallback(reason || '');
+        return;
+      }
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(r.coords, { color: '#2196f3', weight: 6, opacity: 0.75 }));
+      renderRouteMarkers();
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var via = r.fallbackProfile ? ' (callejones/vías no aptas: se usó la red ampliada)' : '';
+      setRoutingInfo((reason ? reason + ' ' : '') + 'Ruta por calles (cálculo local sin conexión a servicios). Distancia: ' +
+        formatDistance(r.distance) + '.' + via);
+    }
+
+    function traceRoute() {
+      if (!origin || !dest) return;
+      routeGoBtn.disabled = true;
+      if (navigator.onLine === false) {
+        setRoutingInfo('Sin conexión: calculando ruta en el grafo local...');
+        loadLocalGraph().then(function () {
+          drawLocalRoute('Estás sin conexión.');
+        }).catch(function () {
+          drawOfflineFallback('Estás sin conexión.');
+        }).then(function () {
+          routeGoBtn.disabled = !(origin && dest);
+        });
+        return;
+      }
+      setRoutingInfo('Calculando ruta...');
+      loadLocalGraph(); // prefetch: grafo listo por si fallan los servicios
+      var coords = origin.lng + ',' + origin.lat + ';' + dest.lng + ',' + dest.lat;
+      var costings = { car: 'auto', foot: 'pedestrian' };
+      var osrmServers = routeMode === 'car'
+        ? [
+          'https://routing.openstreetmap.de/routed-car/route/v1/driving/',
+          'https://router.project-osrm.org/route/v1/driving/'
+        ]
+        : [
+          'https://routing.openstreetmap.de/routed-foot/route/v1/walking/',
+          'https://router.project-osrm.org/route/v1/foot/'
+        ];
+      var requests = osrmServers.map(function (s) {
+        return { kind: 'osrm', url: s + coords + '?overview=full&geometries=geojson' };
+      });
+      requests.push({
+        kind: 'valhalla',
+        url: 'https://valhalla1.openstreetmap.de/route?json=' + encodeURIComponent(JSON.stringify({
+          locations: [
+            { lat: origin.lat, lon: origin.lng },
+            { lat: dest.lat, lon: dest.lng }
+          ],
+          costing: costings[routeMode],
+          units: 'kilometers'
+        }))
+      });
+      function fetchWithTimeout(url, ms) {
+        return new Promise(function (resolve, reject) {
+          var done = false;
+          var timer = setTimeout(function () {
+            done = true;
+            reject(new Error('timeout'));
+          }, ms);
+          var controller = window.AbortController ? new AbortController() : null;
+          var opts = {};
+          if (controller) opts.signal = controller.signal;
+          fetch(url, opts).then(function (res) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(res);
+          }, function (err) {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+      }
+      var settled = false;
+      var pending = requests.length;
+      function finish(okFn) {
+        if (settled) return;
+        settled = true;
+        okFn();
+      }
+      function fallbackLocal(reason) {
+        if (settled) return;
+        settled = true;
+        setRoutingInfo('Servicios de ruta no disponibles. Calculando en el grafo local...');
+        loadLocalGraph().then(function () {
+          drawLocalRoute(reason);
+        }).catch(function () {
+          drawOfflineFallback(reason);
+        }).then(function () {
+          routeGoBtn.disabled = !(origin && dest);
+        });
+      }
+      setTimeout(function () {
+        fallbackLocal('No respondió ningún servicio de rutas.');
+      }, 25000);
+      requests.forEach(function (req) {
+        fetchWithTimeout(req.url, 12000).then(function (res) {
+          if (settled) return;
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        }).then(function (json) {
+          if (settled) return;
+          var route = req.kind === 'valhalla' ? extractValhallaRoute(json) : extractOsrmRoute(json);
+          if (!route) throw new Error('sin ruta');
+          finish(function () {
+            drawRoute(route);
+            routeGoBtn.disabled = !(origin && dest);
+          });
+        }).catch(function () {
+          pending--;
+          if (pending === 0 && !settled) {
+            fallbackLocal('No respondió ningún servicio de rutas.');
+          }
+        });
+      });
+    }
+
+    /* ===== Ruta que pasa por todos los pines (TSP) ===== */
+    var tspSelected = {};
+    var tspTypeEl = document.getElementById('tspType');
+    var tspStartEl = document.getElementById('tspStart');
+    var tspEndEl = document.getElementById('tspEnd');
+    var tspPinsListEl = document.getElementById('tspPinsList');
+    var tspPinsCountEl = document.getElementById('tspPinsCount');
+    var tspGoBtn = document.getElementById('tspGoBtn');
+    var tspInfoEl = document.getElementById('tspInfo');
+
+    function setTspInfo(msg) {
+      if (tspInfoEl) tspInfoEl.textContent = msg;
+    }
+
+    function tspChosenPins() {
+      return pins.filter(function (p) { return tspSelected[p.id] !== false; });
+    }
+
+    function tspOptionExists(sel, value) {
+      for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === value) return true;
+      }
+      return false;
+    }
+
+    function tspFillSelect(sel, chosen, prev) {
+      sel.innerHTML = '';
+      var auto = document.createElement('option');
+      auto.value = 'auto';
+      auto.textContent = 'Automático';
+      sel.appendChild(auto);
+      chosen.forEach(function (p) {
+        var o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = p.name;
+        sel.appendChild(o);
+      });
+      sel.value = tspOptionExists(sel, prev) ? prev : 'auto';
+    }
+
+    function updateTspPanel() {
+      if (!tspPinsListEl) return;
+      var chosen = tspChosenPins();
+      tspPinsListEl.innerHTML = '';
+      pins.forEach(function (p) {
+        var label = document.createElement('label');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = tspSelected[p.id] !== false;
+        cb.addEventListener('change', function () {
+          tspSelected[p.id] = cb.checked;
+          updateTspPanel();
+        });
+        var name = document.createElement('span');
+        name.textContent = p.name;
+        label.appendChild(cb);
+        label.appendChild(makePinsDot(p.color));
+        label.appendChild(name);
+        tspPinsListEl.appendChild(label);
+      });
+
+      if (tspPinsCountEl) tspPinsCountEl.textContent = pins.length ? '(' + chosen.length + '/' + pins.length + ')' : '';
+
+      var prevStart = tspStartEl.value;
+      var prevEnd = tspEndEl.value;
+      tspFillSelect(tspStartEl, chosen, prevStart);
+      tspFillSelect(tspEndEl, chosen, prevEnd);
+
+      var closed = tspTypeEl && tspTypeEl.value === 'closed';
+      tspStartEl.disabled = closed;
+      tspEndEl.disabled = closed;
+      if (tspGoBtn) tspGoBtn.disabled = chosen.length < 2;
+      if (chosen.length < 2) setTspInfo('Marca al menos 2 pines.');
+      else setTspInfo('Modo: ' + routeModeLabel + '. Elige inicio/fin o déjalos en automático.');
+    }
+
+    function tspIndexOfPin(chosen, id) {
+      if (!id || id === 'auto') return -1;
+      for (var i = 0; i < chosen.length; i++) {
+        if (chosen[i].id === id) return i;
+      }
+      return -1;
+    }
+
+    function tspSnapPoints(g, adj, points) {
+      var lats = g.nodes.lat, lons = g.nodes.lon;
+      var out = [];
+      for (var i = 0; i < points.length; i++) {
+        var idx = nearestLocalNode(g, points[i], adj);
+        if (idx < 0) return null;
+        out.push({
+          idx: idx,
+          snapM: haversineKm(points[i], { lat: lats[idx], lng: lons[idx] }) * 1000
+        });
+      }
+      return out;
+    }
+
+    function tspMatrix(g, adj, nodes) {
+      var n = nodes.length;
+      var dist = [];
+      var paths = [];
+      for (var i = 0; i < n; i++) {
+        dist.push(new Float64Array(n));
+        paths.push(new Array(n));
+        for (var j = 0; j < n; j++) {
+          if (i === j) { dist[i][j] = 0; paths[i][j] = [nodes[i].idx]; continue; }
+          var r = dijkstraLocal(adj, nodes[i].idx, nodes[j].idx);
+          if (!r) return null;
+          dist[i][j] = r.distM;
+          paths[i][j] = r.path;
+        }
+      }
+      return { dist: dist, paths: paths };
+    }
+
+    function tspExact(dist, n, start, end) {
+      var active = [], i;
+      for (i = 0; i < n; i++) { if (i !== end) active.push(i); }
+      var m = active.length;
+      if (m === 0) return { order: [end], cost: 0 };
+      var startFree = start < 0 || start === end;
+      var startLocal = -1;
+      if (!startFree) {
+        startLocal = active.indexOf(start);
+        if (startLocal < 0) return null;
+      }
+      var size = 1 << m;
+      var dp = new Float64Array(size * m);
+      var par = new Int32Array(size * m);
+      for (i = 0; i < dp.length; i++) { dp[i] = Infinity; par[i] = -1; }
+      if (startFree) {
+        for (i = 0; i < m; i++) dp[(1 << i) * m + i] = 0;
+      } else {
+        dp[(1 << startLocal) * m + startLocal] = 0;
+      }
+      var full = size - 1;
+      for (var mask = 1; mask < size; mask++) {
+        for (var j = 0; j < m; j++) {
+          if ((mask & (1 << j)) === 0) continue;
+          var cur = dp[mask * m + j];
+          if (cur === Infinity) continue;
+          for (var k = 0; k < m; k++) {
+            if (mask & (1 << k)) continue;
+            var nm = mask | (1 << k);
+            var nd = cur + dist[active[j]][active[k]];
+            if (nd < dp[nm * m + k]) {
+              dp[nm * m + k] = nd;
+              par[nm * m + k] = j;
+            }
+          }
+        }
+      }
+      var best = Infinity, bestJ = -1;
+      for (j = 0; j < m; j++) {
+        var cost = dp[full * m + j];
+        if (cost === Infinity) continue;
+        if (end >= 0) cost += dist[active[j]][end];
+        if (cost < best) { best = cost; bestJ = j; }
+      }
+      if (bestJ < 0) return null;
+      var order = [];
+      var curMask = full, curJ = bestJ;
+      while (curJ >= 0) {
+        order.push(active[curJ]);
+        var pj = par[curMask * m + curJ];
+        curMask ^= (1 << curJ);
+        curJ = pj;
+      }
+      order.reverse();
+      if (end >= 0) order.push(end);
+      return { order: order, cost: best };
+    }
+
+    function tspExactClosed(dist, n, anchor) {
+      if (n <= 1) return { order: [anchor, anchor], cost: 0 };
+      var size = 1 << n;
+      var dp = new Float64Array(size * n);
+      var par = new Int32Array(size * n);
+      for (var i = 0; i < dp.length; i++) { dp[i] = Infinity; par[i] = -1; }
+      dp[(1 << anchor) * n + anchor] = 0;
+      var full = size - 1;
+      for (var mask = 1; mask < size; mask++) {
+        for (var j = 0; j < n; j++) {
+          if ((mask & (1 << j)) === 0) continue;
+          var cur = dp[mask * n + j];
+          if (cur === Infinity) continue;
+          for (var k = 0; k < n; k++) {
+            if (mask & (1 << k)) continue;
+            var nm = mask | (1 << k);
+            var nd = cur + dist[j][k];
+            if (nd < dp[nm * n + k]) {
+              dp[nm * n + k] = nd;
+              par[nm * n + k] = j;
+            }
+          }
+        }
+      }
+      var best = Infinity, bestJ = -1;
+      for (j = 0; j < n; j++) {
+        if (j === anchor) continue;
+        var cost = dp[full * n + j] + dist[j][anchor];
+        if (cost < best) { best = cost; bestJ = j; }
+      }
+      if (bestJ < 0) return null;
+      var order = [];
+      var curMask = full, curJ = bestJ;
+      while (curJ >= 0) {
+        order.push(curJ);
+        var pj = par[curMask * n + curJ];
+        curMask ^= (1 << curJ);
+        curJ = pj;
+      }
+      order.reverse();
+      order.push(anchor);
+      return { order: order, cost: best };
+    }
+
+    function tsp2opt(dist, order) {
+      var n = order.length;
+      var improved = true, rounds = 0;
+      while (improved && rounds < 200) {
+        improved = false;
+        rounds += 1;
+        for (var i = 0; i < n - 2; i++) {
+          for (var j = i + 1; j < n - 1; j++) {
+            var a = order[i], b = order[i + 1], c = order[j], d = order[j + 1];
+            var delta = dist[a][c] + dist[b][d] - dist[a][b] - dist[c][d];
+            if (delta < -1e-9) {
+              var lo = i + 1, hi = j;
+              while (lo < hi) { var t = order[lo]; order[lo] = order[hi]; order[hi] = t; lo++; hi--; }
+              improved = true;
+            }
+          }
+        }
+      }
+    }
+
+    function tspHeuristic(dist, n, start, end, closed) {
+      var anchor = closed ? (start >= 0 ? start : 0) : -1;
+      var remaining = [];
+      for (var i = 0; i < n; i++) {
+        if (closed) { if (i !== anchor) remaining.push(i); }
+        else if (i !== start && i !== end) remaining.push(i);
+      }
+      var order = [];
+      var cur;
+      if (closed) { cur = anchor; order.push(cur); }
+      else if (start >= 0) { cur = start; order.push(cur); }
+      else if (remaining.length) { cur = remaining.shift(); order.push(cur); }
+      else { cur = 0; order.push(cur); }
+      while (remaining.length) {
+        var bi = 0, bd = Infinity;
+        for (var r = 0; r < remaining.length; r++) {
+          var d = dist[cur][remaining[r]];
+          if (d < bd) { bd = d; bi = r; }
+        }
+        cur = remaining.splice(bi, 1)[0];
+        order.push(cur);
+      }
+      if (closed) order.push(anchor);
+      else if (end >= 0 && end !== start) order.push(end);
+      tsp2opt(dist, order);
+      return { order: order };
+    }
+
+    function tspSolveOrder(dist, n, start, end, closed) {
+      if (closed) {
+        if (n <= 12) return tspExactClosed(dist, n, start >= 0 ? start : 0);
+        return tspHeuristic(dist, n, start, end, true);
+      }
+      if (n <= 12) return tspExact(dist, n, start, end);
+      return tspHeuristic(dist, n, start, end, false);
+    }
+
+    function drawTspRoute(sol, mat, chosen, usedProfile, closed) {
+      var coords = [];
+      var total = 0;
+      var order = sol.order;
+      for (var q = 1; q < order.length; q++) {
+        var a = order[q - 1], b = order[q];
+        var seg = mat.paths[a][b];
+        var lats = LOCAL_GRAPH.nodes.lat, lons = LOCAL_GRAPH.nodes.lon;
+        if (!coords.length) coords.push([chosen[a].lat, chosen[a].lng]);
+        for (var k = 0; k < seg.length; k++) coords.push([lats[seg[k]], lons[seg[k]]]);
+        coords.push([chosen[b].lat, chosen[b].lng]);
+      }
+      for (q = 1; q < order.length; q++) total += mat.dist[order[q - 1]][order[q]];
+      for (q = 0; q < mat.snap.length; q++) total += mat.snap[q];
+
+      routeLineLayer.clearLayers();
+      routeLineLayer.addLayer(L.polyline(coords, { color: '#ff9800', weight: 6, opacity: 0.8 }));
+      map.fitBounds(routeLineLayer.getBounds(), { padding: [30, 30] });
+      var extra = usedProfile !== routeMode ? ' (red a pie: algunas vías no son aptas para coche)' : '';
+      var approx = chosen.length > 12 ? ' Orden aproximado.' : '';
+      setTspInfo('Ruta por ' + chosen.length + ' pines (' + (closed ? 'cerrada' : 'abierta') + ', ' +
+        (usedProfile === 'car' ? 'Vehículo' : 'A pie') + '). Distancia total: ' +
+        formatDistance(total) + '.' + extra + approx);
+    }
+
+    function tspRun() {
+      var chosen = tspChosenPins();
+      if (chosen.length < 2) { setTspInfo('Marca al menos 2 pines para trazar la ruta.'); return; }
+      tspGoBtn.disabled = true;
+      setTspInfo('Calculando ruta por ' + chosen.length + ' pines...');
+      var closed = tspTypeEl.value === 'closed';
+      var startIdx = tspIndexOfPin(chosen, tspStartEl.value);
+      var endIdx = tspIndexOfPin(chosen, tspEndEl.value);
+      if (closed) { var anchor = endIdx >= 0 ? endIdx : 0; startIdx = anchor; endIdx = anchor; }
+
+      loadLocalGraph().then(function (g) {
+        var usedProfile = routeMode;
+        var adj = getAdjLocal(g, usedProfile);
+        var nodes = tspSnapPoints(g, adj, chosen);
+        var mat = nodes ? tspMatrix(g, adj, nodes) : null;
+        if (!mat && usedProfile === 'car') {
+          usedProfile = 'foot';
+          adj = getAdjLocal(g, 'foot');
+          nodes = tspSnapPoints(g, adj, chosen);
+          mat = nodes ? tspMatrix(g, adj, nodes) : null;
+        }
+        if (!mat) {
+          setTspInfo('No se pudo conectar por calles todos los pines seleccionados. Prueba el modo A pie.');
+          tspGoBtn.disabled = chosen.length < 2;
+          return;
+        }
+        mat.snap = nodes.map(function (nd) { return nd.snapM; });
+        var sol = tspSolveOrder(mat.dist, chosen.length, startIdx, endIdx, closed);
+        if (!sol) {
+          setTspInfo('No se encontró un recorrido válido para esos pines.');
+          tspGoBtn.disabled = chosen.length < 2;
+          return;
+        }
+        drawTspRoute(sol, mat, chosen, usedProfile, closed);
+        tspGoBtn.disabled = chosen.length < 2;
+      }).catch(function () {
+        setTspInfo('No se pudo cargar el grafo de calles.');
+        tspGoBtn.disabled = chosen.length < 2;
+      });
+    }
+
+    if (tspTypeEl) {
+      tspTypeEl.addEventListener('change', updateTspPanel);
+      tspGoBtn.addEventListener('click', tspRun);
+      document.getElementById('tspClearBtn').addEventListener('click', function () {
+        routeLineLayer.clearLayers();
+        setTspInfo('Ruta de pines borrada.');
+      });
+    }
+
+    routeOriginBtn.addEventListener('click', function () {
+      if (pickingMode === 'origin') {
+        deactivateRoutingPicking();
+        setRoutingInfo('Selección de origen cancelada.');
+        return;
+      }
+      deactivateRoutingPicking();
+      pickingMode = 'origin';
+      routeOriginBtn.classList.add('active');
+      map.getContainer().style.cursor = 'crosshair';
+      setRoutingInfo('Haz clic en el mapa para marcar el origen.');
+    });
+
+    routeDestBtn.addEventListener('click', function () {
+      if (pickingMode === 'dest') {
+        deactivateRoutingPicking();
+        setRoutingInfo('Selección de destino cancelada.');
+        return;
+      }
+      deactivateRoutingPicking();
+      pickingMode = 'dest';
+      routeDestBtn.classList.add('active');
+      map.getContainer().style.cursor = 'crosshair';
+      setRoutingInfo('Haz clic en el mapa para marcar el destino.');
+    });
+
+    document.getElementById('routeOriginClear').addEventListener('click', function () {
+      origin = null;
+      originPin = null;
+      deactivateRoutingPicking();
+      renderRouteMarkers();
+      updateRouteButtons();
+      setRoutingInfo('Origen quitado.');
+    });
+
+    document.getElementById('routeDestClear').addEventListener('click', function () {
+      dest = null;
+      destPin = null;
+      deactivateRoutingPicking();
+      renderRouteMarkers();
+      updateRouteButtons();
+      setRoutingInfo('Destino quitado.');
+    });
+
+    document.getElementById('routeClearBtn').addEventListener('click', clearRoute);
+    routeGoBtn.addEventListener('click', traceRoute);
+
+    document.getElementById('routeModeCar').addEventListener('click', function () {
+      if (routeMode === 'car') return;
+      routeMode = 'car';
+      routeModeLabel = 'Vehículo';
+      document.getElementById('routeModeCar').classList.add('active');
+      document.getElementById('routeModeFoot').classList.remove('active');
+      setRoutingInfo('Modo de ruta: Vehículo.');
+    });
+    document.getElementById('routeModeFoot').addEventListener('click', function () {
+      if (routeMode === 'foot') return;
+      routeMode = 'foot';
+      routeModeLabel = 'A pie';
+      document.getElementById('routeModeFoot').classList.add('active');
+      document.getElementById('routeModeCar').classList.remove('active');
+      setRoutingInfo('Modo de ruta: A pie.');
+    });
+
+    renderRouteMarkers();
+    updateRouteButtons();
+
+    var routingPanel = document.getElementById('routingPanel');
+    var routingToggle = document.getElementById('routingToggle');
+
+    function collapseRoutingPanel() {
+      routingPanel.classList.add('collapsed');
+      routingToggle.textContent = '+';
+    }
+
+    function expandRoutingPanel() {
+      routingPanel.classList.remove('collapsed');
+      routingToggle.textContent = '−';
+    }
+
+    document.getElementById('routingHeader').addEventListener('click', function () {
+      if (routingPanel.classList.contains('collapsed')) expandRoutingPanel();
+      else collapseRoutingPanel();
+    });
+
+    routingToggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (routingPanel.classList.contains('collapsed')) expandRoutingPanel();
+      else collapseRoutingPanel();
+    });
+
+    renderPins();
+
+    refreshStatus();
   </script>
 </body>
 </html>
-
