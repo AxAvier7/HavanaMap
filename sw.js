@@ -1,9 +1,10 @@
 'use strict';
 
-var CACHE_NAME = 'havanamap-shell-v5';
+var CACHE_NAME = 'havanamap-shell-v6';
 var SHELL_URLS = [
   './index.html',
   './data/havana-graph.json',
+  './core/havana-core.js',
   './offline.js',
   './lib/leaflet/leaflet.css',
   './lib/leaflet/leaflet.js',
